@@ -1468,7 +1468,7 @@ sra_cycle_duration_seconds_bucket{monitor="queue",le="0.5"} 100
 |---|---|---|
 | `internal/safety/` | 95%+ | Rule evaluation, condition logic, conflict resolution |
 | `internal/recovery/` | 90%+ | Confidence scoring (TVDB-gate), file matching, parse interpretation |
-| `internal/config/` | 90%+ | Config loading, env overrides, validation, version check |
+| `internal/config/` | 90%+ | Config loading, env overrides, validation |
 | `internal/detectors/` | 85%+ | Issue detection with mocked Sonarr data |
 | `internal/executor/` | 85%+ | Action dispatch, dry-run, error handling |
 | `internal/notifications/` | 80%+ | Template rendering, rate limiting, event routing |
