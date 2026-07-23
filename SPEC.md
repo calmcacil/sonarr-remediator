@@ -1,7 +1,6 @@
 # Sonarr Recovery Agent — Project Specification
 
-**Version:** 2.0.0
-**Status:** Draft
+This specification describes the complete implementation. No production testing will occur until all features described here are implemented.
 
 ---
 
@@ -21,15 +20,13 @@
 12. [Metrics & Observability](#12-metrics--observability)
 13. [Testing Strategy](#13-testing-strategy)
 14. [Deployment](#14-deployment)
-15. [Phase Roadmap](#15-phase-roadmap)
-16. [Long-Term Vision](#16-long-term-vision)
-17. [Appendix: Sonarr API Surface](#17-appendix-sonarr-api-surface)
+15. [Appendix: Sonarr API Surface](#15-appendix-sonarr-api-surface)
 
 ---
 
 ## 1. Overview
 
-Sonarr Recovery Agent is a Go microservice that runs alongside Sonarr as a sidecar container. Its purpose is to autonomously detect, analyze, and recover from common download and import issues that normally require manual intervention.
+Sonarr Recovery Agent is a Go microservice that runs alongside Sonarr as a sidecar container. It autonomously detects, analyzes, and recovers from common download and import issues that normally require manual intervention.
 
 It is **not** a cleanup script. It is a continuous recovery agent that observes Sonarr's state, evaluates configurable safety rules, and acts only when it is confident an action is safe.
 
@@ -39,14 +36,20 @@ It is **not** a cleanup script. It is a continuous recovery agent that observes 
 |---|---|
 | Language | Go (latest stable; currently 1.26) |
 | Runtime | Docker container |
-| State | Stateless in-memory state (retries, suggestions, decision ring buffer); all source data lives in Sonarr |
-| Configuration | YAML file + environment variable overrides |
+| State | In-memory only (retries, suggestions, decision ring buffer); all source data lives in Sonarr |
+| Configuration | YAML file + environment variable overrides with strict validation |
 | Observability | Structured JSON logging, Prometheus metrics, health endpoints |
 | Safety | Dry-run mode, rule engine gate on every destructive action, human-readable decision logs |
 
 ### Relationship with Sonarr
 
 The agent interacts **only** with Sonarr's API. It never communicates with download clients directly. When a queue item needs to be removed, the agent tells Sonarr to remove it; Sonarr forwards the removal to the download client if configured. File scanning for import recovery uses a shared volume mount (read-only).
+
+At startup, the agent detects the running Sonarr version by parsing `GET /api/v3/system/status` (e.g. `"version": "4.0.0.741"` → major version 4) and adapts API call behavior where minor differences exist (blocklist parameter naming, event type values).
+
+### Path Translation
+
+The agent and Sonarr may run in different containers with different mount paths. The agent reads files via its own volume mount (`/data`); Sonarr's API endpoints (parse, manual import) expect paths as seen by Sonarr. The agent maps between the two using the configured `paths.downloadRoots` or paths discovered from Sonarr's download client configuration. All file paths sent to Sonarr's API must be translated to Sonarr's view of the filesystem.
 
 ---
 
@@ -56,20 +59,22 @@ The agent interacts **only** with Sonarr's API. It never communicates with downl
 
 - Reduce manual Sonarr maintenance.
 - Automatically recover from common failure scenarios (stuck downloads, failed imports, naming mismatches).
-- Clean up downloads that will never import ("Not a Custom Format Upgrade" pattern).
+- Clean up downloads that will never import.
 - Assist with edge-case manual imports via confidence-scored suggestions.
 - Provide optional web dashboard for visibility and manual approvals.
 - Never perform a destructive action without passing all configured safety checks.
 - Operate completely autonomously once configured and dry-run is disabled.
+- Handle SIGTERM gracefully (finish in-progress operations, flush logs, exit cleanly).
 
-### Non-Goals (v1)
+### Non-Goals
 
 - Direct download client management (the agent tells Sonarr; Sonarr tells the client).
 - Replacing Sonarr's internal download decision logic.
 - Acting as a media manager or indexer.
 - Multi-instance coordination (single Sonarr per agent instance).
-- Full CRUD management UI for Sonarr (this is a recovery agent, not a Sonarr client).
+- Full CRUD management UI for Sonarr.
 - Persistent database (in-memory state is sufficient; Sonarr is the source of truth).
+- Multi-language support (English only for status message matching and UI).
 
 ---
 
@@ -83,18 +88,18 @@ Continuously polls and evaluates every item in the Sonarr download queue and his
 
 | Endpoint | Purpose | Interval |
 |---|---|---|
-| `/api/v3/queue` | Active and queued downloads (including warnings, errors, status messages) | 30 s |
-| `/api/v3/queue/details` | Per-episode granular detail (import failures, status messages) | 30 s |
+| `/api/v3/queue` | Active and queued downloads | 30 s |
+| `/api/v3/queue/details` | Per-episode detail (import failures, status messages) | 30 s |
 | `/api/v3/history` | Completed/failed import history | 5 min |
-| `/api/v3/system/status` | Sonarr health and connectivity | 60 s |
+| `/api/v3/system/status` | Sonarr health, connectivity, and version | 60 s |
 
-**Tracked state per queue item:**
+**Tracked state per queue item (composite key: `seriesId:episodeId:downloadId`):**
 
-- Download status: queued / paused / downloading / completed / warning / failed
-- Import state: pending / importing / imported / importFailed
-- Status messages: warning text, error text, tracked download status
+- Queue status: one of `queued`, `paused`, `downloading`, `completed`, `warning`, `failed`
+- Import state (`trackedDownloadState`): one of `downloading`, `importPending`, `importing`, `imported`, `importFailed`, `downloadFailed`
+- Status messages: warning text, error text, `trackedDownloadStatus` (`ok`, `warning`, `error`)
 - Duration in current state (age tracking)
-- Episode/series identifiers for cross-referencing with history
+- Series and episode identifiers for cross-referencing with history
 
 ---
 
@@ -102,15 +107,17 @@ Continuously polls and evaluates every item in the Sonarr download queue and his
 
 Detects downloads that have become permanently stuck and will never import successfully.
 
+**Eligible states:** Only items with queue status in `completed`, `warning`, or `failed` are evaluated. Items in `queued`, `paused`, or `downloading` are never acted upon.
+
 **Trigger conditions (any single one is sufficient):**
 
 | Condition | Detection |
 |---|---|
-| Sonarr reports error on queue item | Queue item has `errorMessage` or `trackedDownloadStatus` = `error` |
+| Sonarr reports error | `errorMessage` is set or `trackedDownloadStatus` = `error` |
 | Missing files | Status message contains "No files found are eligible for import" |
-| Sonarr abandoned item | Queue item is `completed` but history shows no import attempt after configurable timeout (default 6 h) |
-| Configurable age timeout | Time since download completed > `maxAge` AND no import in progress |
-| Import repeatedly failed | History shows N consecutive `downloadFailedImport` events for same episode |
+| Abandoned item | `completed` status but no import attempt in history after configurable timeout (default 6 h) |
+| Age timeout | Time since download completed > `maxAge` AND no import in progress |
+| Repeated import failure | History shows N consecutive `downloadFailedImport` events for same episode |
 
 **Actions (ordered, all optional):**
 
@@ -120,45 +127,43 @@ Detects downloads that have become permanently stuck and will never import succe
 
 **Safety gates:**
 
-- Item age ≥ configurable minimum (default 2 h)
-- Not currently in "importing" state
+- Item age >= configurable minimum (default 2 h)
+- Not currently in `importing` state
 - No manual import scheduled for this item
 - No active retry scheduled for this item
-- Rule enabled check
+- Rule enabled
 - Dry-run check
 
 ---
 
 ### 3.3 "Not a Custom Format Upgrade" Removal
 
-One of the most common Sonarr patterns: a download completes, Sonarr determines it is not an upgrade over the existing file (based on custom format scoring), but leaves the completed download sitting in the queue.
+Downloads that complete but Sonarr determines are not an upgrade based on custom format scoring.
 
-**Detection strategy (both methods used):**
+**Detection strategy (both methods used; either match triggers detection):**
 
 **Method A — Queue status message parsing:**
 - Queue item has `trackedDownloadStatus` = `warning`
-- Status message text matches: `"Not a Custom Format Upgrade"` or configurable regex
+- Status message text matches the built-in regex: `(?i)not.*(custom format|an upgrade)`
+- Or a configurable custom regex if provided
 
 **Method B — History event inspection:**
-- History contains `eventType` = `downloadIgnored`
-- History item data includes a reason matching "Not an upgrade"
-
-If either method matches, the item is flagged as "not an upgrade."
+- Primary: History contains `eventType` = `downloadIgnored` with data matching "Not an upgrade"
+- Fallback (older versions): `eventType` = `downloadFailedImport` with matching status message
 
 **Safety gates:**
 
 | Condition | Source |
 |---|---|
-| Download completed | Queue status |
+| Download completed | Queue status = `completed` |
 | Import decision confirmed as no-upgrade | Status message OR history event |
-| Age ≥ waitHours (default 2) | `automation.removeNotCustomFormat.waitHours` |
-| Not currently importing | Queue item trackedDownloadState |
-| No active retry scheduled for this item | In-memory retry queue check |
-| No other active queue item for same episode | Queue + episode ID check |
+| Age >= waitHours (default 2) | `automation.removeNotCustomFormat.waitHours` |
+| Not currently importing | `trackedDownloadState` ≠ `importing` |
+| No active retry scheduled for this item | In-memory retry queue |
+| No other active queue item for same episode | Queue + episode ID cross-check |
 | Rule enabled | `automation.removeNotCustomFormat.enabled` |
 
-**Default action:**
-Remove from queue via Sonarr API. Blocklisting is optional via config.
+**Default action:** Remove from queue via Sonarr API. Blocklisting is optional via config.
 
 ---
 
@@ -171,7 +176,7 @@ For downloads where the download completed but Sonarr could not automatically ma
 - Strange or obfuscated release names
 - Download client renamed the folder
 - Multi-file releases (CD1/CD2, sample + main, extras)
-- Anime absolute numbering (TVDB-based, but naming varies)
+- Anime naming (handled via TVDB SxxExx parsing)
 - Scene naming conventions Sonarr cannot parse
 - Folder name / file name mismatch
 - Unpacked output in unexpected subdirectories
@@ -190,86 +195,111 @@ For downloads where the download completed but Sonarr could not automatically ma
    Walk depth: max 4 levels from download root.
 
 3. PARSE
-   Send each candidate file path to Sonarr's parse endpoint:
-   GET /api/v3/parse?path=/absolute/path/to/file
-
-   Sonarr returns parsed metadata: series title, season number, episode numbers,
-   absolute episode numbers, quality, language.
+   Send each candidate file path to Sonarr's parse endpoint.
+   Paths must be translated from the agent's container mount to
+   Sonarr's container mount before calling the API.
+   GET /api/v3/parse?path=/path/as/seen/by/sonarr/video.mkv
 
 4. MATCH
-   Cross-reference parsed result with the expected series/episode from the
-   original queue item:
-   - Parsed series TVDB ID matches expected series TVDB ID
-   - Parsed season matches expected season
-   - Parsed episode(s) contain the expected episode
+   Cross-reference parsed result with the expected series/episode:
+   - Parsed series TVDB ID must match expected series TVDB ID (mismatch = skip)
+   - Parsed season must match expected season
+   - Parsed episode(s) must contain the expected episode
 
-5. EVALUATE CONFIDENCE
-   Compute a confidence score (0-100) with full breakdown:
-   - Sonarr parse returned valid result: base score, or zero (skip entirely)
-   - TVDB ID match: +40
-   - Season match: +20
-   - Episode match: +20
-   - Quality recognized by Sonarr: +10
-   - Language recognized by Sonarr: +5
-   - File size plausible (> 50 MB): +5
+5. EVALUATE CONFIDENCE (0-100)
+   If parse fails or TVDB ID mismatch → 0 (skip entirely).
+   Otherwise:
+   - TVDB ID match: +35
+   - Season matches expected season: +25
+   - Episode(s) contain expected episode: +25
+   - Quality recognized by Sonarr (parse returned non-zero quality ID): +10
+   - Language recognized by Sonarr (parse returned non-zero language ID): +5
+   Total: max 100
 
-6. IMPORT (if confidence >= threshold)
-   POST /api/v3/manualimport
-   Body includes: path, seriesId, seasonNumber, episodeIds (supports array
-   for multi-ep files), quality, language, downloadId, importMode=move.
+   Confidence breakdown is logged and exposed in the dashboard/API.
 
-7. LOG + NOTIFY
+6. PRE-IMPORT CHECK
+   a. Call GET /api/v3/episode/{episodeId} to check episode status.
+   b. If episode hasFile == false → no existing file, proceed to import.
+   c. If episode hasFile == true → call GET /api/v3/episodefile/{episodeFileId}
+      to retrieve the existing file's quality.
+d. Compare qualities: if the existing file's quality weight is >= the candidate
+       quality weight, reject (log and skip). Quality weights are obtained from
+       the `QualityDefinition` list fetched at startup (higher weight = better).
+       The parse result's `QualityModel.ID` is matched to a `QualityDefinition`
+       to get the weight. If the existing file's quality ID is not found in the
+       definitions, compare by quality name as a fallback.
+   e. For multi-episode files, check each episode individually. Skip episodes
+      with equal or better files; import to remaining episodes.
+
+7. IMPORT (if confidence >= threshold)
+   For each qualifying episode, call POST /api/v3/manualimport.
+   Sonarr's manual import endpoint accepts a single episodeId per request
+   for single-episode files. For multi-episode files, make one call per
+   episode ID. Request body includes:
+   - path (as seen by Sonarr's filesystem)
+   - seriesId, seasonNumber
+   - episodeId (single int — call once per episode)
+   - quality (from parse result), language (from parse result)
+   - downloadId (from queue item)
+   Import mode is not sent in the request; Sonarr uses its configured default.
+
+8. LOG + NOTIFY
    Record action with full confidence breakdown.
 ```
 
 **Auto-import thresholds:**
 
 - `confidence >= autoManualImport.minimumConfidence` (default 95): import automatically.
-- `confidence < minimumConfidence` but `>= manualReviewThreshold` (default 70): create dashboard suggestion for manual review.
-- `confidence < manualReviewThreshold`: take no action, log only.
+- `confidence < minimumConfidence` but `>= manualReviewThreshold` (default 70): create dashboard suggestion.
+- `confidence < manualReviewThreshold`: log only, no action.
 
 ---
 
 ### 3.5 Manual Import Assistant
 
-When automatic recovery is not confident enough, the system generates import suggestions for manual review.
+When automatic recovery is not confident enough, the system generates import suggestions for manual review via the dashboard.
 
 **Suggestion model:**
 
 ```go
 type ImportSuggestion struct {
-    ID              string              `json:"id"`
-    FilePath        string              `json:"filePath"`
-    FileSize        int64               `json:"fileSize"`
-    SeriesTitle     string              `json:"seriesTitle"`
-    SeriesID        int                 `json:"seriesId"`
-    SeasonNumber    int                 `json:"seasonNumber"`
-    EpisodeNumbers  []int               `json:"episodeNumbers"`   // supports multi-episode
-    Confidence      int                 `json:"confidence"`       // 0-100
-    ConfidenceBreakdown *ConfidenceBreakdown `json:"confidenceBreakdown"`
-    MatchDetails    string              `json:"matchDetails"`     // human-readable explanation
-    CreatedAt       time.Time           `json:"createdAt"`
-    Status          string              `json:"status"`           // pending, approved, rejected, ignored
-    DownloadID      string              `json:"downloadId"`
+    ID                   string                `json:"id"`
+    FilePath             string                `json:"filePath"`
+    FileSize             int64                 `json:"fileSize"`
+    SeriesTitle          string                `json:"seriesTitle"`
+    SeriesID             int                   `json:"seriesId"`
+    SeasonNumber         int                   `json:"seasonNumber"`
+    EpisodeNumbers       []int                 `json:"episodeNumbers"`
+    Confidence           int                   `json:"confidence"`
+    ConfidenceBreakdown  *ConfidenceBreakdown  `json:"confidenceBreakdown"`
+    MatchDetails         string                `json:"matchDetails"`
+    CreatedAt            time.Time             `json:"createdAt"`
+    Status               string                `json:"status"`   // pending, approved, rejected, ignored
+    DownloadID           string                `json:"downloadId"`
+    IgnoreUntil          *time.Time            `json:"ignoreUntil,omitempty"`
 }
 
 type ConfidenceBreakdown struct {
-    ParseSuccess    bool   `json:"parseSuccess"`
-    TVDBMatch       bool   `json:"tvdbMatch"`       // +40
-    SeasonMatch     bool   `json:"seasonMatch"`     // +20
-    EpisodeMatch    bool   `json:"episodeMatch"`    // +20
-    QualityKnown    bool   `json:"qualityKnown"`    // +10
-    LanguageKnown   bool   `json:"languageKnown"`   // +5
-    FileSizePlausible bool `json:"fileSizePlausible"` // +5
-    Total           int    `json:"total"`
+    ParseValid       bool `json:"parseValid"`
+    TVDBMatch        bool `json:"tvdbMatch"`         // +35
+    SeasonMatch      bool `json:"seasonMatch"`       // +25
+    EpisodeMatch     bool `json:"episodeMatch"`      // +25
+    QualityKnown     bool `json:"qualityKnown"`      // +10
+    LanguageKnown    bool `json:"languageKnown"`     // +5
+    Total            int  `json:"total"`
 }
 ```
 
+`ParseValid` is always true for items reaching the breakdown screen (failed parses are skipped). It is included for diagnostic transparency.
+
 **Dashboard actions:**
 
-- **Approve**: Re-runs safety check, performs `POST /api/v3/manualimport`, marks status "approved."
+- **Approve**: Re-runs safety check, performs manual import, marks status "approved."
 - **Reject**: Marks status "rejected," optionally removes download from queue.
-- **Ignore**: Marks status "ignored" for N hours (configurable, default 24).
+- **Ignore**: Marks status "ignored" for the configured duration (default 24 h). After expiry, the suggestion is re-evaluated.
+
+**Ignore duration** is configurable via `dashboard.ignoreDuration` (default: `24h`).
 
 ---
 
@@ -277,18 +307,20 @@ type ConfidenceBreakdown struct {
 
 Re-queues imports that failed due to transient conditions.
 
-**Retryable failure signatures (regex-matched against error messages):**
+**Retryable error detection:** Error messages are matched from queue item `errorMessage` and `StatusMessages`, plus history `Data` fields where applicable. Patterns are matched as case-insensitive regex.
+
+**Retryable failure signatures:**
 
 | Pattern | Reason |
 |---|---|
-| `(?i)permission denied` | NAS/FS permission issue |
-| `(?i)access denied` | NAS/FS access issue |
+| `(?i)permission denied` | NAS/FS permission |
+| `(?i)access denied` | NAS/FS access |
 | `(?i)no such file` | NAS/SMB temporarily unavailable |
 | `(?i)connection refused` | Service unavailable |
 | `(?i)connection timed out` | Network issue |
 | `(?i)no space left` | Disk full |
 | `(?i)input/output error` | Transient I/O |
-| `(?i)file.*in use` | File locked by another process |
+| `(?i)file.*in use` | File locked |
 | `(?i)destination.*locked` | Destination locked |
 | `(?i)mount.*not available` | Mount point missing |
 | `(?i)path.*not accessible` | Path not accessible |
@@ -298,52 +330,49 @@ Re-queues imports that failed due to transient conditions.
 - Corrupted file / checksum mismatch
 - Missing expected tracks / streams
 - Resolution or codec mismatch
-- Custom format score below cutoff (already handled by §3.3)
+- Custom format score below cutoff (handled by §3.3)
 
-**Retry schedule (configurable):**
+**Retry schedule (configurable via `retryImports.retryIntervals`):**
 
-```
-Retry 1: after 5 minutes
-Retry 2: after 15 minutes
-Retry 3: after 30 minutes
-Retry 4: after 60 minutes
-Retry 5: after 120 minutes
-Retry 6: after 240 minutes (final)
-Total: 6 retries over ~8 hours
-```
+Default schedule: 5 min, 15 min, 30 min, 1 h, 2 h, 4 h (6 retries over ~8 hours).
 
 Each retry:
 1. Re-checks file existence at expected path.
 2. Re-runs parse against Sonarr.
 3. Re-attempts manual import.
-4. If all retries exhausted, marks permanently failed and triggers notification.
+4. After all retries exhausted, marks permanently failed and fires `import.failed-all-retries` notification.
 
-**Persistence:** In-memory only for v1. If the agent restarts, pending retries are lost. Acceptable trade-off until Phase 3+.
+**Persistence:** In-memory only. If the agent restarts, pending retries are lost.
 
 ---
 
 ### 3.7 Intelligent Cleanup
 
-Optional background tasks that clean up residual files.
+Optional background tasks for residual file cleanup.
 
 **Cleanup actions (all configurable, all disabled by default):**
 
 | Action | Description | Safety Check |
 |---|---|---|
-| `removeEmptyFolders` | Deletes empty directories in download roots | Only if path is inside a configured root; never deletes root; excludes `.partial`, `_unpack` |
+| `removeEmptyFolders` | Deletes empty directories in download roots | Never deletes root; excludes `.partial`, `_unpack` |
 | `removeSampleFiles` | Deletes files matching `sample*`, `*-sample.*` | File size < 500 MB |
 | `removeNFOFiles` | Deletes `.nfo` files | File size < 10 MB |
-| `removeBrokenSymlinks` | Deletes dangling symlinks | `os.Lstat` check before removal |
-| `removeTempExtraction` | Deletes `_unpack`, `.unpack`, `extracted_*` dirs | Only if no active queue item references these paths |
-| `removePartialUnpack` | Deletes files with `.part`, `.partial` extension | Only if age > 24 h |
+| `removeBrokenSymlinks` | Deletes dangling symlinks | `os.Lstat` check |
+| `removeTempExtraction` | Deletes `_unpack`, `.unpack`, `extracted_*` dirs | Only if no active queue items reference paths |
+| `removePartialUnpack` | Deletes `.part`, `.partial` files | Only if age > 24 h |
 
 **Schedule:** Configurable interval (default: once per hour).
+
+**Root folder discovery:**
+1. If `paths.downloadRoots` is configured, use those paths directly.
+2. Otherwise, fetch download client configurations from Sonarr at startup via `GET /api/v3/downloadclient`. Each client's `fields` array is searched for fields named `"downloadFolder"` or `"tvDownloadFolder"` to extract root paths.
+3. As a fallback during operation, infer roots from queue item paths.
 
 ---
 
 ### 3.8 Safety Engine
 
-The safety engine is the **central gatekeeper** for every destructive action. No action bypasses it.
+The central gatekeeper for every destructive action. No action bypasses it.
 
 #### Rule Model
 
@@ -357,13 +386,13 @@ type SafetyRule struct {
 }
 
 type Condition struct {
-    Field    string `yaml:"field"`    // e.g. "age", "status", "importState"
+    Field    string `yaml:"field"`
     Operator string `yaml:"operator"` // eq, neq, gt, gte, lt, lte, in, matches, exists
     Value    string `yaml:"value"`
 }
 
 type Action struct {
-    Type   string            `yaml:"type"`   // remove_queue, manual_import, retry, cleanup, blacklist
+    Type   string            `yaml:"type"`   // remove_queue, manual_import, retry, cleanup, blocklist
     Params map[string]string `yaml:"params"`
 }
 ```
@@ -375,18 +404,15 @@ For each issue detected:
   1. Match against applicable rules
   2. For each matching rule:
      a. Evaluate ALL conditions (AND logic; short-circuit on first failure)
-     b. If all pass → action approved
+     b. If all pass -> action approved
   3. Check global constraints (always enforced):
      - Item not already in an active action
-     - Cooldown: at least 30 min since last action on same series/episode pair
+     - Cooldown: >= 30 min since last action on same series/episode pair
      - Sonarr connectivity confirmed
      - No duplicate action in last 5 min
+     - Item is not in an excluded seriesId or rootPath (prefix match)
   4. Execute action (or log if dry-run)
-  5. Log full decision with:
-     - Item identifier
-     - Rule(s) triggered
-     - Each condition's result (pass/fail with actual vs expected)
-     - Action taken (or reason skipped)
+  5. Log full decision
 ```
 
 #### Decision Log Format
@@ -405,14 +431,35 @@ For each issue detected:
   "trigger": "not_custom_format_upgrade",
   "conditions_evaluated": [
     {"field": "status", "operator": "eq", "expected": "completed", "actual": "completed", "passed": true},
-    {"field": "age_hours", "operator": "gte", "expected": "2", "actual": "6.3", "passed": true},
-    {"field": "import_decision", "operator": "eq", "expected": "not_custom_format_upgrade", "actual": "not_custom_format_upgrade", "passed": true}
+    {"field": "age_hours", "operator": "gte", "expected": "2", "actual": "6.3", "passed": true}
   ],
   "action": "remove_from_queue",
   "executed": true,
   "dry_run": false
 }
 ```
+
+### Global Safety Constraints (Always Enforced)
+
+1. **No duplicate actions**: Same item, same rule, within 5 minutes → skip.
+2. **Cooldown period**: At least 30 minutes between actions on same series/episode pair (key: `seriesId:episodeId`).
+3. **Sonarr connectivity required**: Last health check must have succeeded.
+4. **Atomicity**: If first step of multi-step action fails, do not proceed.
+5. **Exclusion list**: Any item whose series ID matches `exclusions.seriesIds` or whose root path has a prefix matching any `exclusions.rootPaths` is skipped. Root path matching uses prefix comparison on the item's download path.
+6. **State eligibility**: Only items with status in `completed`, `warning`, or `failed` are evaluated.
+7. **TVDB ID gate**: In import recovery, if the parsed TVDB ID does not match the expected series TVDB ID, confidence is 0 and the item is skipped. This is enforced before confidence scoring.
+
+### Conflicting Detectors
+
+When multiple detectors flag the same queue item, only the most conservative action is taken. The priority order (most conservative first):
+
+1. `log_only` (cleanup candidate)
+2. `remove_queue` (stuck download, not custom format)
+3. `blacklist` (blocklist release)
+4. `retry` (retry import)
+5. `manual_import` (import recovery)
+
+If two detectors propose the same action type, the one with the later `DetectedAt` timestamp is used. The resolution logic is implemented in `internal/safety/builtins.go`.
 
 ---
 
@@ -422,15 +469,15 @@ Global flag (`dryRun: true`) that disables all mutating API calls.
 
 **Behavior when enabled:**
 
-- All monitors run normally.
-- All rules evaluate normally.
-- All decisions are logged as if the action would occur.
-- **No** `POST`/`DELETE` requests are sent to Sonarr.
-- Log entries tagged with `"dry_run": true`.
-- Dashboard shows "Would have" actions in a distinct style.
-- Activity feed includes simulated entries for would-be actions.
+- Monitors run normally, including filesystem reads (scanning, path checks).
+- Rules evaluate normally.
+- Decisions are logged as if the action would occur.
+- No `POST`/`DELETE` requests are sent to Sonarr.
+- Filesystem mutations (cleanup deletions) are not performed.
+- Log entries tagged `"dry_run": true`.
+- Dashboard shows "Would have" actions distinctly.
 
-**Purpose:** Deploy the agent, observe its behavior, tune rules, build confidence before enabling automation.
+**Purpose:** Deploy the agent, observe behavior, tune rules, build confidence before enabling automation.
 
 ---
 
@@ -444,10 +491,10 @@ A minimal embedded web server serving a single-page application.
 |---|---|
 | **Status Bar** | Connection status, uptime, dry-run indicator, version |
 | **Statistics Cards** | Recovered imports, downloads removed, retries performed, pending review count |
-| **Current Queue** | Table of current queue items with status, age, identified issues |
-| **Pending Review** | List of `ImportSuggestion` items with approve/reject/ignore buttons; confidence breakdown visible |
-| **Recent Activity** | Reverse-chronological feed of all decisions (executed or would-have) |
-| **Configuration Summary** | Read-only display of active configuration (API key masked) |
+| **Current Queue** | Table of queue items with status, age, identified issues |
+| **Pending Review** | `ImportSuggestion` items with approve/reject/ignore buttons and confidence breakdown |
+| **Recent Activity** | Reverse-chronological feed of decisions (executed or would-have) |
+| **Configuration Summary** | Read-only config display (API key masked) |
 
 **Technical implementation:**
 
@@ -461,29 +508,28 @@ A minimal embedded web server serving a single-page application.
 
 ### 3.11 Notifications
 
-Pluggable notification backends.
+Pluggable notification backends. Notifications are **rate-limited per event type** (max 1 notification per event type per 30 minutes, tracked in-memory, resets on restart). Only sent for errors and items requiring human intervention. Routine successful actions produce log entries only.
 
-**Supported integrations (phased):**
+**Supported integrations:**
 
-| Integration | Phase | Configuration |
-|---|---|---|
-| Discord Webhook | Phase 2 | `notifications.discordWebhook` URL |
-| Slack Webhook | Phase 2 | `notifications.slackWebhook` URL |
-| Gotify | Phase 2 | `notifications.gotify` URL + token |
-| ntfy | Phase 2 | `notifications.ntfy` URL + topic |
-| Generic Webhook | Phase 2 | `notifications.webhook` URL + method + headers + body template |
-| Email (SMTP) | Phase 3 | `notifications.email` SMTP settings |
+| Integration | Configuration |
+|---|---|
+| Discord Webhook | `notifications.discordWebhook` URL |
+| Slack Webhook | `notifications.slackWebhook` URL |
+| Gotify | `notifications.gotify` URL + token |
+| ntfy | `notifications.ntfy` URL + topic |
+| Generic Webhook | `notifications.webhook` URL + method + headers + body template |
+| Email (SMTP) | `notifications.email` SMTP settings |
 
 **Notification events:**
 
-| Event | Default Channels | Purpose |
+| Event | Channels | Purpose |
 |---|---|---|
-| `import.recovered` | Discord, Slack | Successful automatic manual import |
-| `download.removed` | Discord, Slack | Download removed by rule |
-| `import.failed_all_retries` | Discord, Gotify | All retries exhausted |
-| `manual_review.pending` | Discord | New import suggestion needs review |
-| `cleanup.performed` | (none) | Cleanup action executed |
-| `error.sonarr_unreachable` | Gotify, ntfy | Sonarr connectivity lost |
+| `import.failed-all-retries` | Discord, Gotify | All retries exhausted — needs human intervention |
+| `manual-review.pending` | Discord | New import suggestion needs review |
+| `error.sonarr-unreachable` | Gotify, ntfy | Sonarr connectivity lost |
+
+Successful actions (`import.recovered`, `download.removed`, `cleanup.performed`) are logged only, not notified. The dashboard provides a real-time view of all activity.
 
 ---
 
@@ -507,8 +553,8 @@ Pluggable notification backends.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health` | Returns `200 OK` if agent is running |
-| `GET /health/sonarr` | Returns `200 OK` if Sonarr is reachable and authenticated |
+| `GET /health` | Returns `200` if agent is running |
+| `GET /health/sonarr` | Returns `200` if Sonarr is reachable and authenticated |
 
 **Logging:**
 
@@ -585,15 +631,13 @@ Pluggable notification backends.
 
 ### Internal Component Communication
 
-Components communicate via Go channels and shared in-memory state:
-
 - **Monitors** push detected items into per-type channels.
 - **Detectors** consume from monitor channels and produce `Issue` values.
 - **Safety Engine** receives `Issue` values, evaluates rules, and produces `Decision` values.
 - **Action Executor** receives approved `Decision` values and performs Sonarr API calls (or logs as dry-run).
-- **Retry Scheduler** manages a timer-based in-memory retry queue.
-- **Dashboard API** exposes shared aggregations (last N decisions, current stats, pending suggestions).
-- **Cleanup Engine** uses shared volume mount for filesystem access; never calls external APIs for cleanup.
+- **Retry Scheduler** manages an in-memory timer-based retry queue.
+- **Dashboard API** exposes shared aggregations (last N decisions, stats, suggestions).
+- **Cleanup Engine** uses shared volume mount for filesystem access.
 
 ### Directory Structure
 
@@ -608,16 +652,17 @@ sonarr-remediator/
 │   │   ├── defaults.go          # Default values
 │   │   └── validate.go          # Startup config validation (strict)
 │   ├── sonarr/
-│   │   ├── client.go            # Sonarr REST API client
+│   │   ├── client.go            # Sonarr REST API client (version detection, rate limiting)
 │   │   ├── queue.go             # Queue endpoint calls
 │   │   ├── history.go           # History endpoint calls
 │   │   ├── manual_import.go     # Manual import calls
-│   │   ├── parse.go             # Parse endpoint calls
-│   │   ├── system.go            # System status & health
+│   │   ├── parse.go             # Parse endpoint calls (with path translation)
+│   │   ├── system.go            # System status, health, version
 │   │   ├── quality.go           # Quality definitions (fetched at startup)
-│   │   └── language.go          # Language definitions (fetched at startup)
+│   │   ├── language.go          # Language definitions (fetched at startup)
+│   │   └── download_client.go   # Download client root folder discovery
 │   ├── monitors/
-│   │   ├── queue_monitor.go     # Queue polling & diffing
+│   │   ├── queue_monitor.go     # Queue polling & diffing (composite key)
 │   │   ├── history_monitor.go   # History polling & diffing
 │   │   └── health_monitor.go    # Sonarr connectivity
 │   ├── detectors/
@@ -627,12 +672,12 @@ sonarr-remediator/
 │   │   ├── import_recovery.go   # Failed import recovery detection
 │   │   └── cleanup.go           # Cleanup candidate detection
 │   ├── recovery/
-│   │   ├── import.go            # File scanning, parsing, confidence scoring, manual import
+│   │   ├── import.go            # File scanning, parse, confidence, import
 │   │   └── scanner.go           # Directory walking & file matching
 │   ├── safety/
-│   │   ├── engine.go            # Rule evaluation engine
+│   │   ├── engine.go            # Rule evaluation engine + global constraints
 │   │   ├── rule.go              # Rule & condition types
-│   │   └── builtins.go          # Built-in rules derived from config
+│   │   └── builtins.go          # Built-in rules + detector conflict resolution
 │   ├── executor/
 │   │   ├── executor.go          # Action execution interface
 │   │   ├── queue_actions.go     # Queue removal (via Sonarr API)
@@ -650,7 +695,7 @@ sonarr-remediator/
 │   │       ├── style.css        # Minimal styling
 │   │       └── app.js           # Dashboard logic (vanilla JS)
 │   ├── notifications/
-│   │   ├── notifier.go          # Notifier interface
+│   │   ├── notifier.go          # Notifier interface + in-memory rate limiter
 │   │   ├── discord.go
 │   │   ├── slack.go
 │   │   ├── gotify.go
@@ -661,7 +706,7 @@ sonarr-remediator/
 │   ├── logging/
 │   │   └── logging.go           # Structured logger (slog)
 │   └── types/
-│       └── types.go             # Domain types (Issue, Decision, Suggestion, etc.)
+│       └── types.go             # Domain types (Issue, Decision, Suggestion)
 ├── config.example.yaml
 ├── Dockerfile
 ├── docker-compose.example.yaml
@@ -683,9 +728,13 @@ type Client struct {
     BaseURL    *url.URL
     APIKey     string
     HTTPClient *http.Client
+    Version    string   // detected Sonarr version, e.g. "4.0.0.741"
 }
+```
 
-// Core methods:
+**Client methods:**
+
+```go
 func (c *Client) GetQueue(ctx context.Context) ([]QueueItem, error)
 func (c *Client) GetQueueDetails(ctx context.Context) ([]QueueDetailItem, error)
 func (c *Client) GetHistory(ctx context.Context, params HistoryParams) ([]HistoryItem, error)
@@ -695,13 +744,32 @@ func (c *Client) Parse(ctx context.Context, path string) (*ParseResult, error)
 func (c *Client) ManualImport(ctx context.Context, req ManualImportRequest) error
 func (c *Client) GetQualityDefinitions(ctx context.Context) ([]QualityDefinition, error)
 func (c *Client) GetLanguages(ctx context.Context) ([]Language, error)
+func (c *Client) GetEpisode(ctx context.Context, episodeID int) (*EpisodeResource, error)
+func (c *Client) GetEpisodeFile(ctx context.Context, episodeFileID int) (*EpisodeFileResource, error)
+func (c *Client) GetDownloadClients(ctx context.Context) ([]DownloadClientResource, error)
+func (c *Client) GetSeries(ctx context.Context, seriesID int) (*SeriesResource, error)
 ```
+
+**Convenience methods:**
+
+```go
+// GetEpisodeFileForEpisode fetches the episode, checks hasFile,
+// and if true, fetches the episode file. Returns nil if no file exists.
+func (c *Client) GetEpisodeFileForEpisode(ctx context.Context, episodeID int) (*EpisodeFileResource, error)
+```
+
+**Version detection:**
+At startup, `GetSystemStatus` returns a `Version` string like `"4.0.0.741"`. The major version (first number) determines blocklist parameter naming and event type handling.
 
 **Error handling:**
 - All calls use `context.Context` for cancellation and timeouts.
-- 4xx (except 429) are terminal errors for that item.
-- 5xx and network errors trigger exponential backoff with jitter (max 3 retries).
-- Concurrent request limiting via semaphore (max 5 concurrent Sonarr requests).
+- `401`/`403` responses trigger an auth failure alert; monitors continue disabled until credentials are fixed.
+- Other `4xx` (except `429`) are terminal errors for that item.
+- `5xx` and network errors trigger exponential backoff with jitter (max 3 retries).
+- Concurrent request limiting via semaphore (max 5 concurrent requests).
+- If Sonarr becomes unreachable, monitors pause with exponential backoff (1 min, 2 min, 4 min, ..., max 10 min). Once connectivity resumes, perform a full state refresh.
+
+---
 
 ### 5.2 Queue Monitor (`internal/monitors/queue_monitor.go`)
 
@@ -710,11 +778,13 @@ type QueueMonitor struct {
     client   *sonarr.Client
     interval time.Duration
     issues   chan<- Issue
-    lastSeen map[int]QueueState // diff tracking for state transitions
+    lastSeen map[string]QueueState  // key: "seriesId:episodeId:downloadId"
 }
-
-// Each tick: fetch queue + details, diff against lastSeen, emit Issues.
 ```
+
+Each tick: fetch queue + details, diff against lastSeen using composite keys, emit Issues for items in eligible states.
+
+---
 
 ### 5.3 Issue Detector Interface (`internal/detectors/detector.go`)
 
@@ -752,13 +822,15 @@ const (
 )
 ```
 
+---
+
 ### 5.4 Safety Engine (`internal/safety/engine.go`)
 
 ```go
 type Engine struct {
     rules       []SafetyRule
-    activeItems map[string]time.Time   // active actions tracker
-    lastAction  map[string]time.Time   // cooldown tracker (key: "series:episode")
+    activeItems map[string]time.Time   // active actions (composite key)
+    lastAction  map[string]time.Time   // cooldown ("seriesId:episodeId")
 }
 
 func (e *Engine) Evaluate(ctx context.Context, issue Issue) (*Decision, error)
@@ -783,13 +855,7 @@ type ConditionResult struct {
 }
 ```
 
-**Evaluation order:**
-1. Check rule enabled.
-2. Check all conditions (AND logic; short-circuit on first failure).
-3. Check global constraints.
-4. If all pass → `Approved = true`.
-5. If `DryRun == true` → `Approved = true` but `Decision.DryRun = true`.
-6. Log full decision with all condition results.
+---
 
 ### 5.5 Action Executor (`internal/executor/executor.go`)
 
@@ -803,11 +869,11 @@ type Executor struct {
 func (e *Executor) Execute(ctx context.Context, decision Decision) error
 ```
 
-Dispatches to specific handlers. Each handler:
+Each handler:
 1. Checks `dryRun` — if true, logs and returns nil.
 2. Performs the Sonarr API call(s) or filesystem operation.
 3. Logs the outcome.
-4. Fires notification if configured.
+4. Fires notification if configured (only for error states; see §3.11).
 
 ---
 
@@ -816,23 +882,24 @@ Dispatches to specific handlers. Each handler:
 ### Core Domain Types
 
 ```go
-// QueueItem represents a Sonarr queue item (simplified from API response).
+// ─── Queue ───────────────────────────────────────────────────────────
+
 type QueueItem struct {
-    ID                  int             `json:"id"`
-    SeriesID            int             `json:"seriesId"`
-    EpisodeID           int             `json:"episodeId"`
-    SeriesTitle         string          `json:"seriesTitle"`
-    EpisodeTitle        string          `json:"episodeTitle"`
-    Quality             string          `json:"quality"`
-    Size                int64           `json:"size"`
-    Status              string          `json:"status"`              // queued, paused, downloading, completed, warning, failed
-    TrackedDownloadStatus string        `json:"trackedDownloadStatus"` // ok, warning, error
-    TrackedDownloadState   string       `json:"trackedDownloadState"` // downloading, importPending, importing, imported, importFailed, downloadFailed
-    StatusMessages      []StatusMessage `json:"statusMessages"`
-    ErrorMessage        string          `json:"errorMessage"`
-    DownloadID          string          `json:"downloadId"`
-    OutputPath          string          `json:"outputPath"`          // download directory path
-    Added               time.Time       `json:"added"`
+    ID                    int             `json:"id"`
+    SeriesID              int             `json:"seriesId"`
+    EpisodeID             int             `json:"episodeId"`
+    SeriesTitle           string          `json:"seriesTitle"`
+    EpisodeTitle          string          `json:"episodeTitle"`
+    Quality               string          `json:"quality"`
+    Size                  int64           `json:"size"`
+    Status                string          `json:"status"`                // queued|paused|downloading|completed|warning|failed
+    TrackedDownloadStatus string          `json:"trackedDownloadStatus"` // ok|warning|error
+    TrackedDownloadState  string          `json:"trackedDownloadState"`  // downloading|importPending|importing|imported|importFailed|downloadFailed
+    StatusMessages        []StatusMessage `json:"statusMessages"`
+    ErrorMessage          string          `json:"errorMessage"`
+    DownloadID            string          `json:"downloadId"`
+    OutputPath            string          `json:"outputPath"`
+    Added                 time.Time       `json:"added"`
 }
 
 type StatusMessage struct {
@@ -840,53 +907,47 @@ type StatusMessage struct {
     Messages []string `json:"messages"`
 }
 
-// QueueDetailItem adds per-episode detail to a queue item.
 type QueueDetailItem struct {
     QueueItem
     Episode *EpisodeResource `json:"episode,omitempty"`
 }
 
-type EpisodeResource struct {
-    ID             int    `json:"id"`
-    SeriesID       int    `json:"seriesId"`
-    SeasonNumber   int    `json:"seasonNumber"`
-    EpisodeNumber  int    `json:"episodeNumber"`
-    Title          string `json:"title"`
-}
+// ─── History ─────────────────────────────────────────────────────────
 
-// HistoryItem represents a Sonarr history record.
 type HistoryItem struct {
-    ID         int               `json:"id"`
-    SeriesID   int               `json:"seriesId"`
-    EpisodeID  int               `json:"episodeId"`
-    SourceTitle string           `json:"sourceTitle"`
-    EventType  string            `json:"eventType"`
-    Quality    string            `json:"quality"`
-    Date       time.Time         `json:"date"`
-    Data       map[string]string `json:"data"`
+    ID          int               `json:"id"`
+    SeriesID    int               `json:"seriesId"`
+    EpisodeID   int               `json:"episodeId"`
+    SourceTitle string            `json:"sourceTitle"`
+    EventType   string            `json:"eventType"`  // "grabbed"|"downloadFolderImported"|"downloadFailedImport"|"downloadIgnored"|"episodeFileDeleted"
+    Quality     string            `json:"quality"`
+    Date        time.Time         `json:"date"`
+    Data        map[string]string `json:"data"`
 }
 
-// HistoryParams for filtering history queries.
 type HistoryParams struct {
     Page          int    `json:"page"`
     PageSize      int    `json:"pageSize"`
     SortKey       string `json:"sortKey"`
     SortDirection string `json:"sortDirection"`
-    EventType     int    `json:"eventType,omitempty"` // 1=grabbed, 3=downloadFolderImported, 4=downloadFailedImport, 7=downloadIgnored
+    EventType     int    `json:"eventType,omitempty"`  // Sonarr API uses int for event type filter (1=grabbed, 3=imported, 4=failedImport, 7=ignored)
     SeriesID      int    `json:"seriesId,omitempty"`
     EpisodeID     int    `json:"episodeId,omitempty"`
 }
+// Note: HistoryParams.EventType is int because Sonarr's API query param expects an integer.
+// HistoryItem.EventType is string because that's what the API response returns.
 
-// ManualImportRequest sent to Sonarr's manual import endpoint.
+// ─── Manual Import ───────────────────────────────────────────────────
+
 type ManualImportRequest struct {
     Path         string        `json:"path"`
     SeriesID     int           `json:"seriesId"`
     SeasonNumber int           `json:"seasonNumber"`
-    EpisodeIDs   []int         `json:"episodeIds"`
+    EpisodeID    int           `json:"episodeId"`   // single episode per call; issue multiple calls for multi-ep files
     Quality      QualityModel  `json:"quality"`
     Language     LanguageModel `json:"language"`
     DownloadID   string        `json:"downloadId"`
-    ImportMode   string        `json:"importMode"` // "move" or "copy"
+    // ImportMode is intentionally not included; Sonarr uses its configured default.
 }
 
 type QualityModel struct {
@@ -908,7 +969,8 @@ type LanguageModel struct {
     Name string `json:"name"`
 }
 
-// ParseResult returned by Sonarr's parse endpoint.
+// ─── Parse ───────────────────────────────────────────────────────────
+
 type ParseResult struct {
     Title             string             `json:"title"`
     ParsedEpisodeInfo *ParsedEpisodeInfo `json:"parsedEpisodeInfo"`
@@ -917,20 +979,20 @@ type ParseResult struct {
 }
 
 type ParsedEpisodeInfo struct {
-    ReleaseTitle             string       `json:"releaseTitle"`
-    SeriesTitle              string       `json:"seriesTitle"`
-    SeasonNumber             int          `json:"seasonNumber"`
-    EpisodeNumbers           []int        `json:"episodeNumbers"`
-    AbsoluteEpisodeNumbers   []int        `json:"absoluteEpisodeNumbers"`
-    FullSeason               bool         `json:"fullSeason"`
-    Quality                  QualityModel `json:"quality"`
-    Language                 LanguageModel `json:"language"`
+    ReleaseTitle           string        `json:"releaseTitle"`
+    SeriesTitle            string        `json:"seriesTitle"`
+    SeasonNumber           int           `json:"seasonNumber"`
+    EpisodeNumbers         []int         `json:"episodeNumbers"`
+    AbsoluteEpisodeNumbers []int         `json:"absoluteEpisodeNumbers"`
+    FullSeason             bool          `json:"fullSeason"`
+    Quality                QualityModel  `json:"quality"`
+    Language               LanguageModel `json:"language"`
 }
 
 type SeriesInfo struct {
-    Title     string `json:"title"`
-    TVDBID    int    `json:"tvdbId"`
-    ImdbID    string `json:"imdbId"`
+    Title  string `json:"title"`
+    TVDBID int    `json:"tvdbId"`
+    ImdbID string `json:"imdbId"`
 }
 
 type EpisodeLookup struct {
@@ -940,22 +1002,77 @@ type EpisodeLookup struct {
     Title         string `json:"title"`
 }
 
-// QualityDefinition fetched from Sonarr at startup.
+// ─── Episode / File ──────────────────────────────────────────────────
+
+type EpisodeResource struct {
+    ID            int    `json:"id"`
+    SeriesID      int    `json:"seriesId"`
+    SeasonNumber  int    `json:"seasonNumber"`
+    EpisodeNumber int    `json:"episodeNumber"`
+    Title         string `json:"title"`
+    HasFile       bool   `json:"hasFile"`
+    EpisodeFileID int    `json:"episodeFileId"`
+}
+
+type EpisodeFileResource struct {
+    ID                  int    `json:"id"`
+    SeriesID            int    `json:"seriesId"`
+    SeasonNumber        int    `json:"seasonNumber"`
+    EpisodeNumber       int    `json:"episodeNumber"`
+    RelativePath        string `json:"relativePath"`
+    Quality             string `json:"quality"`
+    QualityCutoffNotMet bool   `json:"qualityCutoffNotMet"`
+    Size                int64  `json:"size"`
+}
+// Note: Sonarr's episode file API response does not include a quality ID directly.
+// Quality comparison is done by fetching the episode file's quality definitions
+// or by maintaining a quality-to-ID mapping from the quality definitions endpoint.
+// For simplicity, the pre-import check compares quality by name: if the existing
+// file's quality name matches or is ranked higher in the quality definitions list,
+// the import is rejected.
+
+// ─── Series ──────────────────────────────────────────────────────────
+
+type SeriesResource struct {
+    ID     int    `json:"id"`
+    Title  string `json:"title"`
+    TVDBID int    `json:"tvdbId"`
+    Path   string `json:"path"`
+}
+
+// ─── Definitions (Fetched at Startup) ────────────────────────────────
+
 type QualityDefinition struct {
     ID     int    `json:"id"`
     Name   string `json:"name"`
     Title  string `json:"title"`
+    Weight int    `json:"weight"`  // Sonarr's internal ranking; higher = better
 }
 
-// Language fetched from Sonarr at startup.
 type Language struct {
     ID   int    `json:"id"`
     Name string `json:"name"`
 }
 
-// SystemStatus returned by Sonarr's system status endpoint.
+// ─── Download Client (for Root Folder Discovery) ─────────────────────
+
+type DownloadClientResource struct {
+    ID     int                     `json:"id"`
+    Name   string                  `json:"name"`
+    Fields []DownloadClientField   `json:"fields"`
+}
+
+type DownloadClientField struct {
+    Name  string `json:"name"`
+    Value string `json:"value"`
+}
+// Root folder extraction: iterate Fields, look for Name == "downloadFolder"
+// or Name == "tvDownloadFolder". The Value is the download root path (string).
+
+// ─── System ──────────────────────────────────────────────────────────
+
 type SystemStatus struct {
-    Version string `json:"version"`
+    Version string `json:"version"`  // e.g. "4.0.0.741"
 }
 ```
 
@@ -965,9 +1082,9 @@ type SystemStatus struct {
 
 ### Built-in Rules (Derived from Config)
 
-Each configurable automation setting generates internal safety rules at startup.
+Each automation setting generates internal safety rules at startup.
 
-**Example — config:**
+**Example:**
 
 ```yaml
 automation:
@@ -976,7 +1093,7 @@ automation:
     waitHours: 2
 ```
 
-**Generates rule:**
+Generates:
 
 ```go
 SafetyRule{
@@ -997,71 +1114,68 @@ SafetyRule{
 }
 ```
 
-### Global Safety Constraints (Always Enforced)
-
-1. **No duplicate actions**: Same item, same rule, within 5 minutes → skip.
-2. **Cooldown period**: At least 30 minutes between actions on same series/episode pair.
-3. **Sonarr connectivity required**: Last health check must have succeeded.
-4. **Atomicity**: If first step of multi-step action fails, do not proceed.
-
 ---
 
 ## 8. Configuration Schema
 
 ```yaml
 # Sonarr Recovery Agent Configuration
-# Version: 2.0.0
 
 # ─── Sonarr Connection ───
 sonarr:
-  url: http://sonarr:8989          # REQUIRED. Sonarr base URL.
-  apiKey: ""                        # REQUIRED. Sonarr API key.
-  timeout: 30s                      # HTTP request timeout.
-  maxConcurrency: 5                 # Max concurrent Sonarr API requests.
+  url: http://sonarr:8989
+  apiKey: ""
+  timeout: 30s
+  maxConcurrency: 5
 
 # ─── Monitoring ───
 monitoring:
-  queueInterval: 30s                # Queue polling interval.
-  historyInterval: 5m              # History polling interval.
-  healthInterval: 60s              # Sonarr health check interval.
-  startupDelay: 10s                # Delay before first poll cycle.
+  queueInterval: 30s
+  historyInterval: 5m
+  healthInterval: 60s
+  startupDelay: 10s
 
 # ─── File System ───
 paths:
-  downloadRoots: []                 # Override: explicit download roots for scanning.
-                                    # If empty, inferred from Sonarr queue item outputPaths.
-                                    # Must match volume mounts in container.
+  downloadRoots: []
+  # If empty, fetched from Sonarr's download client configuration at startup.
+  # If the agent container's mount path differs from Sonarr's, provide explicit mappings.
+  agentRoot: ""     # The root path as seen by the agent container (e.g., /data)
+  sonarrRoot: ""    # The root path as seen by Sonarr (e.g., /data)
+
+# ─── Exclusion ───
+exclusions:
+  seriesIds: []     # Series IDs to never touch.
+  rootPaths: []     # Root folder prefixes to exclude. Any queue item whose
+                    # download path starts with one of these is skipped.
 
 # ─── Automation ───
 automation:
 
-  # ── Remove "Not a Custom Format Upgrade" downloads ──
   removeNotCustomFormat:
     enabled: true
-    waitHours: 2                    # Minimum age before removal.
-    blocklistRelease: false         # Also blocklist the release.
-    statusMessageRegex: ""          # Custom regex (defaults to built-in).
+    waitHours: 2
+    blocklistRelease: false
+    statusMessageRegex: ""
 
-  # ── Remove broken/stuck downloads ──
   removeBrokenDownloads:
     enabled: true
-    waitHours: 6                    # Minimum age before removal.
+    waitHours: 6
     blocklistRelease: false
-    errorConditions:                # Which error states trigger removal.
+    errorConditions:
       - missing_files
       - abandoned
 
-  # ── Retry failed imports ──
   retryImports:
     enabled: true
-    retryIntervals:                 # Retry schedule.
+    retryIntervals:
       - 5m
       - 15m
       - 30m
       - 1h
       - 2h
       - 4h
-    retryableErrors:                # Error patterns that trigger retry.
+    retryableErrors:
       - "(?i)permission denied"
       - "(?i)access denied"
       - "(?i)no such file"
@@ -1074,13 +1188,11 @@ automation:
       - "(?i)mount.*not available"
       - "(?i)path.*not accessible"
 
-  # ── Automatic manual import ──
   autoManualImport:
-    enabled: false                  # DEFAULT OFF. Enable after dry-run testing.
-    minimumConfidence: 95           # Auto-import if confidence >= this.
-    manualReviewThreshold: 70       # Create review suggestion if confidence >= this.
+    enabled: false
+    minimumConfidence: 95
+    manualReviewThreshold: 70
 
-  # ── Intelligent cleanup ──
   cleanup:
     enabled: false
     interval: 1h
@@ -1115,6 +1227,7 @@ dashboard:
   port: 8080
   host: 0.0.0.0
   authToken: ""
+  ignoreDuration: 24h               # Duration a suggestion stays "ignored"
 
 # ─── Notifications ───
 notifications:
@@ -1133,7 +1246,7 @@ notifications:
     url: ""
     method: POST
     headers: {}
-    bodyTemplate: ""
+    bodyTemplate: ""                # Go template; context is the notification event struct
   email:
     enabled: false
     smtpHost: ""
@@ -1144,24 +1257,26 @@ notifications:
     to: []
 
   events:
-    import_recovered: [discord]
-    download_removed: [discord]
-    import_failed_all_retries: [discord, gotify]
-    manual_review_pending: [discord]
-    cleanup_performed: []
+    import.failed-all-retries: [discord, gotify]
+    manual-review.pending: [discord]
+    error.sonarr-unreachable: [gotify, ntfy]
 
 # ─── Logging ───
 logging:
-  level: info                       # debug, info, warn, error.
-  format: json                      # json or text.
+  level: info
+  format: json
 
 # ─── Global ───
-dryRun: true                        # DEFAULT TRUE. Set to false to enable actions.
+dryRun: true
 ```
+
+### Path Translation
+
+When `paths.agentRoot` and `paths.sonarrRoot` are both set, the agent translates paths before sending them to Sonarr's API. For example, if the agent sees `/data/downloads/movie.mkv` and `agentRoot=/data`, `sonarrRoot=/data`, the path sent to Sonarr is `/data/downloads/movie.mkv` (unchanged when roots match). If roots differ, the prefix is swapped.
 
 ### Environment Variable Overrides
 
-All config keys can be overridden via environment variables using the prefix `SRA_` and double-underscore separators:
+Prefix `SRA_` with double-underscore separators:
 
 ```
 SRA_SONARR__URL=http://sonarr:8989
@@ -1175,7 +1290,7 @@ SRA_AUTOMATION__AUTO_MANUAL_IMPORT__MINIMUM_CONFIDENCE=90
 
 ### Startup Validation (Strict)
 
-On startup, the agent must validate and fail fast with clear errors for:
+The agent must fail fast with clear errors for:
 
 | Check | Rule |
 |---|---|
@@ -1185,10 +1300,14 @@ On startup, the agent must validate and fail fast with clear errors for:
 | All duration values | Must parse as valid Go durations |
 | `autoManualImport.minimumConfidence` | Must be 0-100 |
 | `autoManualImport.manualReviewThreshold` | Must be 0-100 and <= `minimumConfidence` |
+| `dashboard.ignoreDuration` | Must be a valid Go duration > 0 |
 | `retryImports.retryIntervals` | Must be non-empty if `retryImports.enabled` |
-| `notifications.email.*` | If `notifications.email.enabled`, all SMTP fields required |
+| `notifications.email` | If enabled, all SMTP fields required |
 | `paths.downloadRoots` | If provided, each path must exist and be readable |
-| Config file itself | Must parse as valid YAML with no unknown top-level keys |
+| `paths.agentRoot` and `paths.sonarrRoot` | If one is set, both must be set; both must exist |
+| `exclusions.seriesIds` | Each ID must be a positive integer |
+| `exclusions.rootPaths` | If provided, each path must exist |
+| Config file | Must parse as valid YAML with no unknown top-level keys |
 
 ---
 
@@ -1201,21 +1320,21 @@ Base path: `/api/v1/`
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/status` | Agent status (version, uptime, dry-run, sonarr status) |
-| `GET` | `/api/v1/stats` | Aggregated statistics (counts of actions, items) |
-| `GET` | `/api/v1/queue` | Current Sonarr queue items (cached, from last poll) |
+| `GET` | `/api/v1/stats` | Aggregated statistics |
+| `GET` | `/api/v1/queue` | Current queue items (cached, from last poll) |
 | `GET` | `/api/v1/suggestions` | List pending import suggestions |
-| `POST` | `/api/v1/suggestions/{id}/approve` | Approve a suggestion (triggers import) |
-| `POST` | `/api/v1/suggestions/{id}/reject` | Reject a suggestion |
-| `POST` | `/api/v1/suggestions/{id}/ignore` | Ignore a suggestion for configured duration |
-| `GET` | `/api/v1/activity` | Recent decisions feed (limit/offset query params) |
+| `POST` | `/api/v1/suggestions/{id}/approve` | Approve suggestion (triggers import) |
+| `POST` | `/api/v1/suggestions/{id}/reject` | Reject suggestion |
+| `POST` | `/api/v1/suggestions/{id}/ignore` | Ignore suggestion for `dashboard.ignoreDuration` |
+| `GET` | `/api/v1/activity` | Recent decisions feed (limit/offset) |
 | `GET` | `/api/v1/config` | Read-only config summary (API key masked) |
-| `GET` | `/health` | Health check (returns 200) |
+| `GET` | `/health` | Health check |
 | `GET` | `/health/sonarr` | Sonarr connectivity check |
 | `GET` | `/metrics` | Prometheus metrics endpoint |
 
 ### Authentication
 
-Dashboard endpoints protected by token when `dashboard.authToken` is configured:
+Dashboard endpoints protected by token when `dashboard.authToken` is set:
 
 ```
 Authorization: Bearer <authToken>
@@ -1230,8 +1349,8 @@ Authorization: Bearer <authToken>
 ### Technology
 
 - Single HTML file with embedded CSS and JavaScript.
-- Zero external dependencies (no npm, no frameworks, no CDN).
-- Served via Go's `embed.FS` — no build step.
+- Zero external dependencies.
+- Served via Go's `embed.FS`.
 
 ### UI Layout
 
@@ -1249,16 +1368,12 @@ Authorization: Bearer <authToken>
 │  ┌─────────────────────────────────────────────┐│
 │  │ 10:12  Removed: Ubuntu.S01E05              ││
 │  │        Reason: Not Custom Format Upgrade   ││
-│  │        Age: 6h  Status: completed           ││
 │  ├─────────────────────────────────────────────┤│
 │  │ 09:42  Recovered: Breaking Bad S05E14      ││
-│  │        Confidence: 98%  (TVDB ✓ Season ✓   ││
-│  │         Episode ✓ Quality ✓ Language ✓)    ││
+│  │        Confidence: 98%  TVDB✓ S✓ E✓ Q✓ L✓  ││
 │  ├─────────────────────────────────────────────┤│
-│  │ 09:15  Suggestion Created                  ││
-│  │        Better.Call.Saul.S06E03.mkv         ││
-│  │        Confidence: 85%  [Approve] [Reject] ││
-│  │        Breakdown: TVDB ✓ Season ✓ Ep ✗     ││
+│  │ 09:15  Suggestion: Saul S06E03  85%        ││
+│  │        TVDB✓ S✓ E✗  [Approve] [Reject]     ││
 │  └─────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────┘
 ```
@@ -1267,34 +1382,40 @@ Authorization: Bearer <authToken>
 
 ## 11. Notifications
 
-### Discord Template (Recovered Import)
+### Templates
+
+**`manual-review.pending` (Discord):**
 
 ```json
 {
   "embeds": [{
-    "title": "Recovered Import",
-    "description": "**Series:** Foundation\n**Episode:** S02E08\n**Confidence:** 98%\n**Breakdown:** TVDB ✓ | Season ✓ | Episode ✓ | Quality ✓ | Language ✓",
-    "color": 3066993,
-    "timestamp": "2026-07-23T09:42:00Z",
-    "footer": {"text": "Sonarr Recovery Agent"}
+    "title": "Import Suggestion Needs Review",
+    "description": "**Series:** Foundation\n**Episode:** S02E08\n**Confidence:** 85%\n**Breakdown:** TVDB ✓ | Season ✓ | Episode ✓ | Quality ✓ | Language ✓",
+    "color": 16705372,
+    "footer": {"text": "Sonarr Recovery Agent — Manual Review Required"}
   }]
 }
 ```
 
-### Slack Template (Recovered Import)
+**`import.failed-all-retries` (Discord):**
 
 ```json
 {
-  "blocks": [
-    {"type": "header", "text": {"type": "plain_text", "text": "Recovered Import"}},
-    {"type": "section", "fields": [
-      {"type": "mrkdwn", "text": "*Series:*\nFoundation"},
-      {"type": "mrkdwn", "text": "*Episode:*\nS02E08"},
-      {"type": "mrkdwn", "text": "*Confidence:*\n98%"},
-      {"type": "mrkdwn", "text": "*Breakdown:*\nTVDB ✓ Season ✓ Ep ✓ Q ✓ L ✓"}
-    ]}
-  ]
+  "embeds": [{
+    "title": "Import Permanently Failed",
+    "description": "**Series:** Foundation\n**Episode:** S02E08\nAll retries exhausted. Manual intervention required.",
+    "color": 15548997,
+    "footer": {"text": "Sonarr Recovery Agent — Action Required"}
+  }]
 }
+```
+
+**`error.sonarr-unreachable` (Gotify/ntfy):**
+
+```
+Title: Sonarr Unreachable
+Message: Sonarr at http://sonarr:8989 is not responding. Agent will retry with backoff.
+Priority: high
 ```
 
 ---
@@ -1304,38 +1425,35 @@ Authorization: Bearer <authToken>
 All metrics under the `sra_` namespace.
 
 ```
-# HELP sra_imports_recovered_total Number of successful automatic manual imports.
+# HELP sra_imports_recovered_total Successful automatic manual imports.
 # TYPE sra_imports_recovered_total counter
 sra_imports_recovered_total{confidence_bucket="95-100"} 5
 
-# HELP sra_downloads_removed_total Number of downloads removed by rule.
+# HELP sra_downloads_removed_total Downloads removed by rule.
 # TYPE sra_downloads_removed_total counter
 sra_downloads_removed_total{reason="not_custom_format"} 14
-sra_downloads_removed_total{reason="stuck_download"} 3
 
-# HELP sra_retries_total Number of import retries attempted.
+# HELP sra_retries_total Import retries attempted.
 # TYPE sra_retries_total counter
 sra_retries_total{outcome="success"} 2
-sra_retries_total{outcome="failed"} 1
 
-# HELP sra_decisions_evaluated_total Number of safety rule evaluations.
+# HELP sra_decisions_evaluated_total Safety rule evaluations.
 # TYPE sra_decisions_evaluated_total counter
 sra_decisions_evaluated_total{rule="remove_not_custom_format",passed="true"} 42
-sra_decisions_evaluated_total{rule="remove_not_custom_format",passed="false"} 12
 
-# HELP sra_queue_items_observed Current number of queue items observed.
+# HELP sra_queue_items_observed Current queue items count.
 # TYPE sra_queue_items_observed gauge
 sra_queue_items_observed 18
 
-# HELP sra_suggestions_pending Number of import suggestions awaiting review.
+# HELP sra_suggestions_pending Pending review suggestions.
 # TYPE sra_suggestions_pending gauge
 sra_suggestions_pending 2
 
-# HELP sra_sonarr_up Whether Sonarr is reachable (1) or not (0).
+# HELP sra_sonarr_up 1 if Sonarr reachable, 0 otherwise.
 # TYPE sra_sonarr_up gauge
 sra_sonarr_up 1
 
-# HELP sra_cycle_duration_seconds Duration of each monitoring cycle.
+# HELP sra_cycle_duration_seconds Duration per monitoring cycle.
 # TYPE sra_cycle_duration_seconds histogram
 sra_cycle_duration_seconds_bucket{monitor="queue",le="0.5"} 100
 ```
@@ -1348,24 +1466,35 @@ sra_cycle_duration_seconds_bucket{monitor="queue",le="0.5"} 100
 
 | Layer | Coverage Target | Focus |
 |---|---|---|
-| `internal/safety/` | 95%+ | Rule evaluation, condition logic, edge cases |
-| `internal/recovery/` | 90%+ | Confidence scoring, file matching, parse interpretation |
-| `internal/config/` | 90%+ | Config loading, env overrides, validation |
+| `internal/safety/` | 95%+ | Rule evaluation, condition logic, conflict resolution |
+| `internal/recovery/` | 90%+ | Confidence scoring (TVDB-gate), file matching, parse interpretation |
+| `internal/config/` | 90%+ | Config loading, env overrides, validation, version check |
 | `internal/detectors/` | 85%+ | Issue detection with mocked Sonarr data |
 | `internal/executor/` | 85%+ | Action dispatch, dry-run, error handling |
-| `internal/notifications/` | 80%+ | Template rendering, webhook payload construction |
+| `internal/notifications/` | 80%+ | Template rendering, rate limiting, event routing |
 
 ### Integration Tests
 
-**Sonarr API Mock:** `httptest.Server` simulating Sonarr API responses (queue, history, parse, manual import, quality, language).
+**Sonarr API Mock:** `httptest.Server` simulating Sonarr API responses for all endpoints.
 
 **End-to-end scenarios:**
-1. Stuck download → safety check passes → removal (or dry-run skip).
-2. "Not a Custom Format Upgrade" → wait time satisfied → removal.
-3. Failed import → recovery scans directory → high confidence → auto-import with multi-episode support.
-4. Failed import → medium confidence → suggestion created with confidence breakdown.
-5. Transient error → retry schedule → recovery on retry N.
-6. Dry-run enabled → all detections work, zero mutations.
+1. Stuck download detected → safety check passes → removal (or dry-run skip).
+2. "Not a Custom Format Upgrade" detected via queue message → removal.
+3. "Not a Custom Format Upgrade" detected via history event → removal.
+4. Failed import → TVDB match → high confidence → auto-import.
+5. Failed import → TVDB mismatch → confidence 0 → skip.
+6. Failed import → TVDB match → medium confidence → suggestion created with breakdown.
+7. Failed import → transient error → retry schedule → recovery on retry N.
+8. Failed import → all retries exhausted → `import.failed-all-retries` notification.
+9. Multi-episode file → import via multiple `episodeId` calls.
+10. Pre-import check finds existing better file → import rejected.
+11. Pre-import check: existing file has lower quality → import proceeds.
+12. Pre-import check: episode has no file → import proceeds.
+13. Dry-run enabled → all detections work, zero mutations.
+14. Exclusion list (seriesId) match → item skipped entirely.
+15. Exclusion list (rootPath prefix) match → item skipped entirely.
+16. Path translation: agent path correctly mapped to Sonarr path.
+17. Dashboard ignore → suggestion returns after `ignoreDuration` expires.
 
 ### Test Fixtures
 
@@ -1407,7 +1536,7 @@ services:
   sonarr-remediator:
     image: ghcr.io/calmcacil/sonarr-remediator:latest
     volumes:
-      - ./data:/data:ro              # Read-only for file scanning
+      - ./data:/data:ro
       - ./remediator-config:/config
     environment:
       - SRA_SONARR__URL=http://sonarr:8989
@@ -1417,118 +1546,60 @@ services:
       - "8080:8080"
     depends_on:
       - sonarr
+    stop_grace_period: 30s
 ```
 
----
+### Graceful Shutdown
 
-## 15. Phase Roadmap
+On receiving `SIGTERM` or `SIGINT`:
 
-### Phase 1 — Core Foundation (MVP)
+1. Stop all monitors (no new poll cycles).
+2. Cancel any pending cleanup operations.
+3. Allow in-progress manual imports and Sonarr API calls to complete (timeout: 30 s).
+4. Flush decision log ring buffer to stdout.
+5. Drain and close notification channels.
+6. Close HTTP server.
+7. Exit with code 0.
 
-| Feature | Priority |
-|---|---|
-| Configuration loading (YAML + env) with strict validation | Must |
-| Sonarr API client (queue, history, status) | Must |
-| Queue & history monitors | Must |
-| "Not a Custom Format Upgrade" detector (message + history) | Must |
-| Stuck download detector | Must |
-| Safety engine with built-in rules | Must |
-| Dry-run mode | Must |
-| Structured JSON logging | Must |
-| Action executor (queue removal via Sonarr API) | Must |
-| Docker image & Compose example | Must |
-
-**Deliverable:** Container that monitors Sonarr, detects stuck downloads and "not an upgrade" items, logs what it would do, and removes them (when dry-run disabled).
-
-### Phase 2 — Recovery & Visibility
-
-| Feature | Priority |
-|---|---|
-| Import recovery engine (scan + parse + match + confidence) | Must |
-| Manual import suggestion system with confidence breakdown | Must |
-| Manual import execution (auto + manual approval) | Must |
-| Multi-episode support in import | Must |
-| Retry engine with configurable intervals | Must |
-| Quality & language definition fetching at startup | Must |
-| Dashboard (status, stats, queue, activity, suggestions) | Must |
-| Dashboard auth token | Should |
-| Discord, Slack, Gotify, ntfy, webhook notifications | Must |
-
-**Deliverable:** Full recovery agent with dashboard, notifications, and manual review workflow.
-
-### Phase 3 — Polish & Production
-
-| Feature | Priority |
-|---|---|
-| Intelligent cleanup engine | Should |
-| Prometheus metrics endpoint | Must |
-| Health endpoints | Must |
-| Email notification (SMTP) | Should |
-| Config hot-reload | Could |
-| Custom user-defined rules | Could |
-| Comprehensive integration tests | Must |
-| Documentation | Must |
-
-**Deliverable:** Production-ready release with metrics, docs, and full test coverage.
-
-### Phase 4 — Multi-*arr Support
-
-| Feature |
-|---|
-| Refactor to generic `pkg/arrclient` |
-| Radarr adapter |
-| Lidarr adapter |
-| Readarr adapter |
-| Multi-app dashboard |
-| Shared rule engine across *arr types |
+`stop_grace_period` should be at least 30 seconds. A second signal causes immediate exit.
 
 ---
 
-## 16. Long-Term Vision
+## 15. Appendix: Sonarr API Surface
 
-The project should become a generic **Arr Recovery Agent** capable of autonomously monitoring and maintaining media automation stacks. Support for Sonarr is the initial implementation, but the core architecture should make it straightforward to extend to Radarr, Lidarr, and Readarr by implementing application-specific API adapters.
-
-### Core Design Principles
-
-1. **Safety first, automation second.** Prefer observation and reporting over risky assumptions. Build confidence through dry-run mode.
-2. **Transparency.** Every action includes a human-readable explanation. Decision logs show exactly which rules fired and why.
-3. **Explainability.** A non-technical user reading the dashboard should understand why the agent did something.
-4. **Configurability.** Nothing is hardcoded. Every threshold, pattern, and parameter is configurable. Defaults are safe and conservative.
-5. **Modularity.** Reusable components for monitoring, rule evaluation, recovery, cleanup, notifications, metrics, and dashboards.
-6. **Reversibility.** Where possible, actions should be reversible. Never perform irreversible destructive actions without explicit user configuration.
-
----
-
-## 17. Appendix: Sonarr API Surface
-
-The agent uses the Sonarr v3 API (used by both Sonarr v3 and v4 installations). Key endpoints:
+The agent uses the Sonarr v3 API (used by both Sonarr v3 and v4 installations). The agent detects the running version at startup and adapts where minor differences exist.
 
 ### Queue
 - `GET /api/v3/queue` — List queue items.
 - `GET /api/v3/queue/details` — Queue items with episode details.
-- `DELETE /api/v3/queue/{id}` — Remove item from queue. Query param: `blocklist=true` to also blocklist.
+- `DELETE /api/v3/queue/{id}` — Remove item. Params: `blocklist=true` (v3) or `removeFromClient=true` (v4 fallback, version-detected).
 
 ### History
-- `GET /api/v3/history` — History of all events.
-  - Params: `page`, `pageSize`, `sortKey`, `sortDirection`, `eventType`, `episodeId`, `seriesId`
+- `GET /api/v3/history` — Event history. Params: `page`, `pageSize`, `sortKey`, `sortDirection`, `eventType` (int: 1=grabbed, 3=imported, 4=failedImport, 7=ignored), `episodeId`, `seriesId`.
 
 ### Manual Import
 - `GET /api/v3/manualimport` — Files available for manual import.
-- `POST /api/v3/manualimport` — Execute manual import.
+- `POST /api/v3/manualimport` — Execute manual import. Accepts `episodeId` (single int).
 
 ### Parse
-- `GET /api/v3/parse` — Parse a file path or title. Query: `path` or `title`.
+- `GET /api/v3/parse` — Parse a file path or title. Param: `path` or `title`.
 
 ### System
-- `GET /api/v3/system/status` — System status (version, health).
+- `GET /api/v3/system/status` — System status. Response includes `version` (string).
 
-### Quality & Language (Fetched at Startup)
-- `GET /api/v3/qualitydefinition` — Quality definitions.
-- `GET /api/v3/language` — Language profiles.
+### Quality & Language
+- `GET /api/v3/qualitydefinition` — Quality definitions with `id`, `name`, `title`, `weight`.
+- `GET /api/v3/language` — Language profiles with `id`, `name`.
 
-### Episode / Series (Reference)
-- `GET /api/v3/episode/{id}` — Episode details.
-- `GET /api/v3/series/{id}` — Series details.
+### Download Clients
+- `GET /api/v3/downloadclient` — Download client configurations. Each client has `fields[]` containing `{name, value}`. Root paths are in fields named `downloadFolder` or `tvDownloadFolder`.
+
+### Episode & Episode File
+- `GET /api/v3/episode/{id}` — Episode details including `hasFile` (bool) and `episodeFileId` (int, 0 if no file).
+- `GET /api/v3/episodefile/{id}` — Episode file details including quality name, size, season/episode numbers.
+
+### Series
+- `GET /api/v3/series/{id}` — Series details (title, path, tvdbId).
 - `GET /api/v3/series` — List all series.
 
 ---
