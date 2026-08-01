@@ -1,0 +1,78 @@
+# Sonarr Recovery Agent Configuration
+
+# ─── Sonarr Connection ───
+sonarr:
+  url: http://sonarr:8989
+  apiKey: "" # required — set via SRA_SONARR__API_KEY
+  timeout: 30s
+  maxConcurrency: 5
+
+# ─── Monitoring ───
+monitoring:
+  queueInterval: 30s
+  healthInterval: 60s
+  startupDelay: 10s
+
+# ─── File System ───
+paths:
+  downloadRoots: []
+  # If empty, fetched from Sonarr's download client configuration at startup.
+  # If the agent container's mount path differs from Sonarr's, provide explicit mappings.
+  agentRoot: "" # The root path as seen by the agent container (e.g., /data)
+  sonarrRoot: "" # The root path as seen by Sonarr (e.g., /data)
+
+# ─── Exclusion ───
+exclusions:
+  seriesIds: [] # Series IDs to never touch.
+  rootPaths: [] # Root folder prefixes to exclude. Any queue item whose
+  # download path starts with one of these is skipped.
+
+# ─── Automation ───
+automation:
+
+  removeNotCustomFormat:
+    enabled: true
+    waitHours: 2
+    blocklistRelease: false
+    statusMessageRegex: ""
+
+  removeBrokenDownloads:
+    enabled: true
+    waitHours: 6
+    blocklistRelease: false
+    errorConditions:
+      - missing_files
+      - abandoned
+
+  retryImports:
+    enabled: true
+    retryIntervals:
+      - 5m
+      - 15m
+      - 30m
+      - 1h
+      - 2h
+      - 4h
+    retryableErrors:
+      - "(?i)permission denied"
+      - "(?i)access denied"
+      - "(?i)no such file"
+      - "(?i)connection refused"
+      - "(?i)connection timed out"
+      - "(?i)no space left"
+      - "(?i)input/output error"
+      - "(?i)file.*in use"
+      - "(?i)destination.*locked"
+      - "(?i)mount.*not available"
+      - "(?i)path.*not accessible"
+
+  autoManualImport:
+    enabled: false
+    minimumConfidence: 95
+
+# ─── Logging ───
+logging:
+  level: info
+
+# ─── Global ───
+dryRun: true
