@@ -116,6 +116,11 @@ func (e *Engine) SetSonarrUp(up bool) {
 	e.sonarrUp.Store(up)
 }
 
+// SonarrUp reports the latest connectivity result.
+func (e *Engine) SonarrUp() bool {
+	return e.sonarrUp.Load()
+}
+
 // SetRetryActive records whether a retry is scheduled for the given item key.
 // Items with an active retry are not eligible for removal or manual import.
 func (e *Engine) SetRetryActive(key string, active bool) {
