@@ -179,8 +179,8 @@ func (e *Engine) gatesFor(issue types.Issue) []types.CheckResult {
 		retryImports := e.cfg.Automation.RetryImports.Enabled
 		return []types.CheckResult{
 			{Check: "recovery.possible", Expected: "autoManualImport.enabled OR retryImports.enabled",
-				Actual:   fmt.Sprintf("autoManualImport=%t retryImports=%t", autoImport, retryImports),
-				Passed:   autoImport || retryImports},
+				Actual: fmt.Sprintf("autoManualImport=%t retryImports=%t", autoImport, retryImports),
+				Passed: autoImport || retryImports},
 			e.retryCheck(key),
 		}
 	default:

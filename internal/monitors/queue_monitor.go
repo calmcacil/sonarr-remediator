@@ -95,18 +95,19 @@ func (m *QueueMonitor) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			if now.Before(nextPoll) {
-				continue // still paused in backoff
-			}
-			nextPoll = time.Time{}
-
+			// Connectivity is re-checked on every tick so a recovery resumes
+			// within one interval (SPEC §5.1); the backoff only throttles the
+			// down-state bookkeeping, never the resume path.
 			if !m.engine.SonarrUp() {
+				if !now.Before(nextPoll) {
+					skipping = true
+					nextPoll = now.Add(backoff)
+					backoff = min(monitorBackoffMax, 2*backoff)
+				}
 				m.logger.Debug("skipping poll: sonarr unreachable")
-				skipping = true
-				nextPoll = now.Add(backoff)
-				backoff = min(monitorBackoffMax, 2*backoff)
 				continue
 			}
+			nextPoll = time.Time{}
 
 			if skipping {
 				skipping = false

@@ -175,9 +175,9 @@ func applyEnv(prefix string, v reflect.Value) error {
 			key = prefix + "__" + name
 		}
 		fv := v.Field(i)
-		if envVal, ok := os.LookupEnv("SRA_" + strings.ToUpper(key)); ok {
+		if envVal, ok := os.LookupEnv("SRA_" + toEnvPath(key)); ok {
 			if err := setField(fv, envVal); err != nil {
-				return fmt.Errorf("config: env SRA_%s: %w", strings.ToUpper(key), err)
+				return fmt.Errorf("config: env SRA_%s: %w", toEnvPath(key), err)
 			}
 		}
 		if fv.Kind() == reflect.Struct {
@@ -187,6 +187,30 @@ func applyEnv(prefix string, v reflect.Value) error {
 		}
 	}
 	return nil
+}
+
+// toEnvPath converts a nested YAML key path to its SRA_ environment name:
+// camelCase components become SCREAMING_SNAKE, nested levels join with "__"
+// (SPEC §8: SRA_SONARR__API_KEY, SRA_AUTOMATION__RETRY_IMPORTS__RETRY_INTERVALS).
+func toEnvPath(key string) string {
+	parts := strings.Split(key, "__")
+	for i, p := range parts {
+		parts[i] = envPart(p)
+	}
+	return strings.Join(parts, "__")
+}
+
+// envPart converts one camelCase name to SCREAMING_SNAKE ("apiKey" -> "API_KEY",
+// "removeNotCustomFormat" -> "REMOVE_NOT_CUSTOM_FORMAT").
+func envPart(name string) string {
+	var b strings.Builder
+	for i, r := range name {
+		if r >= 'A' && r <= 'Z' && i > 0 && ((name[i-1] >= 'a' && name[i-1] <= 'z') || (name[i-1] >= '0' && name[i-1] <= '9')) {
+			b.WriteByte('_')
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToUpper(b.String())
 }
 
 func setField(fv reflect.Value, envVal string) error {
