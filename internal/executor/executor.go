@@ -11,6 +11,7 @@ import (
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
 	"github.com/calmcacil/sonarr-remediator/internal/recovery"
+	"github.com/calmcacil/sonarr-remediator/internal/selector"
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	"github.com/calmcacil/sonarr-remediator/internal/types"
 )
@@ -77,6 +78,8 @@ func (e *Executor) Execute(ctx context.Context, decision types.Decision) error {
 		return e.manualImport(ctx, decision)
 	case types.ActionRetry:
 		return e.retryImport(ctx, decision)
+	case types.ActionReconcile:
+		return e.reconcile(ctx, decision)
 	default:
 		return fmt.Errorf("executor: unknown action %q", decision.Action)
 	}
@@ -165,19 +168,156 @@ func (e *Executor) retryImport(ctx context.Context, decision types.Decision) err
 	return nil
 }
 
+// reconcile executes one approved episode-reconciliation plan (SPEC §3.2):
+// the plan winner is imported when it upgrades the episode's existing file,
+// otherwise it is removed; every discard is removed. All removals pass
+// removeFromClient=true so Sonarr tells the download client to delete the
+// files. Discards are removed regardless of the winner's outcome — the plan
+// has resolved them. Dry-run logs the intended actions and touches nothing.
+func (e *Executor) reconcile(ctx context.Context, decision types.Decision) error {
+	plan, ok := decision.Issue.Details[types.DetailsReconcilePlan].(types.ReconcilePlan)
+	if !ok {
+		return fmt.Errorf("executor: reconcile decision %s missing %s details",
+			decisionID(decision), types.DetailsReconcilePlan)
+	}
+	winner := plan.Winner
+	id := strconv.Itoa(winner.ID)
+
+	upgrade, err := e.reconcileUpgrade(ctx, winner)
+	if err != nil {
+		return fmt.Errorf("executor: upgrade check for queue item %d: %w", winner.ID, err)
+	}
+
+	if decision.DryRun {
+		want := "import"
+		if !upgrade {
+			want = "remove"
+		}
+		msg := fmt.Sprintf("Would have %s queue item %s (episode reconciliation winner) and removed %d discarded release(s)",
+			want, id, len(plan.Discards))
+		e.logger.Info(msg, e.reconcileAttrs(decision, "action.recommended", msg, plan, upgrade)...)
+		return nil
+	}
+
+	var firstErr error
+	if upgrade {
+		imported, err := recovery.ReconcileImport(ctx, e.client, winner, e.baseLogger)
+		if err != nil {
+			firstErr = err
+			msg := "Failed to import reconciliation winner " + id
+			e.logger.Error(msg, append(e.reconcileAttrs(decision, "action.error", msg, plan, upgrade), "error", err)...)
+		} else if imported {
+			msg := "Imported reconciliation winner " + id
+			e.logger.Info(msg, e.reconcileAttrs(decision, "action.taken", msg, plan, upgrade)...)
+		} else {
+			msg := "No importable candidate for reconciliation winner " + id + "; left in queue"
+			e.logger.Info(msg, append(e.reconcileAttrs(decision, "action.skipped", msg, plan, upgrade),
+				"reason", "no file matched in Sonarr preview or import rejected")...)
+		}
+	} else {
+		if err := e.client.RemoveQueueItem(ctx, winner.ID, true); err != nil {
+			firstErr = err
+			msg := "Failed to remove non-upgrade winner " + id
+			e.logger.Error(msg, append(e.reconcileAttrs(decision, "action.error", msg, plan, upgrade), "error", err)...)
+		} else {
+			msg := "Removed non-upgrade winner " + id
+			e.logger.Info(msg, e.reconcileAttrs(decision, "action.taken", msg, plan, upgrade)...)
+		}
+	}
+
+	// Discards are resolved by the plan regardless of the winner's outcome.
+	for _, d := range plan.Discards {
+		did := strconv.Itoa(d.ID)
+		if err := e.client.RemoveQueueItem(ctx, d.ID, true); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			msg := "Failed to remove discarded release " + did
+			e.logger.Error(msg, append(e.decisionAttrs(decision, "action.error", msg), "error", err)...)
+			continue
+		}
+		msg := "Removed discarded release " + did
+		e.logger.Info(msg, e.decisionAttrs(decision, "action.taken", msg)...)
+	}
+	return firstErr
+}
+
+// reconcileUpgrade reports whether the plan winner upgrades the episode's
+// existing file (SPEC §3.2): an episode with no file is always upgradeable;
+// otherwise the release's custom-format score must beat the existing file's
+// score, with quality as the tie-breaker (selector.IsUpgrade).
+func (e *Executor) reconcileUpgrade(ctx context.Context, release types.QueueItem) (bool, error) {
+	ef, err := e.client.GetEpisodeFileForEpisode(ctx, release.EpisodeID)
+	if err != nil {
+		return false, err
+	}
+	if ef == nil {
+		return true, nil // no existing file: any matched release imports
+	}
+	rw, rok := e.client.QualityWeightByID(release.Quality.Quality.ID)
+	ew, eok := e.client.QualityWeightByName(string(ef.Quality))
+	return selector.IsUpgrade(release.CustomFormatScore, ef.CustomFormatScore, rw, ew, rok && eok), nil
+}
+
+// reconcileAttrs renders the SPEC §7 decision record for a reconcile action:
+// the item group from decisionAttrs plus the plan's episode key, the winner's
+// upgrade decision, and the discard list.
+func (e *Executor) reconcileAttrs(decision types.Decision, event, message string, plan types.ReconcilePlan, upgrade bool) []any {
+	attrs := e.decisionAttrs(decision, event, message)
+	attrs = append(attrs,
+		"episode_key", plan.EpisodeKey(),
+		"upgrade", upgrade,
+	)
+	if len(plan.Discards) > 0 {
+		attrs = append(attrs, "discards", reconcileDiscardLogs(plan.Discards))
+	}
+	return attrs
+}
+
+// reconcileDiscardLog is the JSON shape of one discarded release in the
+// SPEC §7 decision log. slog marshals KindAny values with encoding/json, so
+// json tags control the emitted keys.
+type reconcileDiscardLog struct {
+	ID      int    `json:"id"`
+	Release string `json:"release"`
+	Score   int    `json:"score"`
+}
+
+// reconcileDiscardLogs converts a plan's discards to the decision-log shape.
+func reconcileDiscardLogs(discards []types.QueueItem) []reconcileDiscardLog {
+	out := make([]reconcileDiscardLog, 0, len(discards))
+	for _, d := range discards {
+		out = append(out, reconcileDiscardLog{ID: d.ID, Release: d.Title, Score: d.CustomFormatScore})
+	}
+	return out
+}
+
 // decisionAttrs renders the SPEC §7 decision record as slog attributes.
+// The item group carries release identity and, when the issuing detector
+// enriched the details (stuck-download release context, SPEC §3.2), the
+// matched-episode fields as well.
 func (e *Executor) decisionAttrs(decision types.Decision, event, message string) []any {
 	item := decision.Issue.QueueItem
+	itemGroup := []slog.Attr{
+		slog.String("key", item.CompositeKey()),
+		slog.Int("id", item.ID),
+		slog.String("title", item.SeriesTitle),
+		slog.String("series", item.SeriesTitle),
+		slog.String("episode", item.EpisodeTitle),
+		slog.String("release", item.Title),
+		slog.String("release_id", item.DownloadID),
+		slog.Int("custom_format_score", item.CustomFormatScore),
+		slog.Any("custom_formats", item.CustomFormatNames()),
+	}
+	for _, k := range []string{"episode_match", "episode_has_file", "existing_quality"} {
+		if v, ok := decision.Issue.Details[k]; ok {
+			itemGroup = append(itemGroup, slog.Any(k, v))
+		}
+	}
 	return []any{
 		"event", event,
 		"decision_id", decisionID(decision),
-		"item", slog.GroupValue(
-			slog.String("key", item.CompositeKey()),
-			slog.Int("id", item.ID),
-			slog.String("title", item.SeriesTitle),
-			slog.String("series", item.SeriesTitle),
-			slog.String("episode", item.EpisodeTitle),
-		),
+		"item", slog.GroupValue(itemGroup...),
 		"trigger", string(decision.Issue.Type),
 		"checks", checksToLog(decision.Checks),
 		"action", string(decision.Action),

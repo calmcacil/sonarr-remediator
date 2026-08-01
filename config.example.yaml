@@ -70,6 +70,12 @@ automation:
     enabled: false
     minimumConfidence: 95
 
+  # Episode reconciliation: map targeted hits (stuck downloads, not a custom
+  # format upgrade) by episode, import the highest custom-format-score
+  # release as an upgrade, and remove the rest (SPEC §3.2).
+  reconcile:
+    enabled: true
+
 # ─── Logging ───
 logging:
   level: info

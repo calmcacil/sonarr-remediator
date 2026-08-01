@@ -34,7 +34,7 @@ func (c *Client) DownloadRoots(ctx context.Context) ([]string, error) {
 			if f.Name != "downloadFolder" && f.Name != "tvDownloadFolder" {
 				continue
 			}
-			v := strings.TrimSpace(f.Value)
+			v := strings.TrimSpace(string(f.Value))
 			if v == "" {
 				continue
 			}

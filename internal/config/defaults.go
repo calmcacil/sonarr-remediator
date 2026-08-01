@@ -54,6 +54,9 @@ func Defaults() *Config {
 				Enabled:           false,
 				MinimumConfidence: 95,
 			},
+			Reconcile: ReconcileConfig{
+				Enabled: true,
+			},
 		},
 		Logging: LoggingConfig{
 			Level: "info",

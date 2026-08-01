@@ -106,6 +106,11 @@ func TestDefaults(t *testing.T) {
 			cfg.Automation.AutoManualImport.MinimumConfidence)
 	}
 
+	// ─── reconcile ───
+	if !cfg.Automation.Reconcile.Enabled {
+		t.Error("Reconcile.Enabled = false, want true")
+	}
+
 	// ─── Logging / global ───
 	if cfg.Logging.Level != "info" {
 		t.Errorf("Logging.Level = %q, want %q", cfg.Logging.Level, "info")

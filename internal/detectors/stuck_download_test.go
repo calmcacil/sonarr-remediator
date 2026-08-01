@@ -1,11 +1,16 @@
 package detectors
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
+	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	"github.com/calmcacil/sonarr-remediator/internal/types"
 )
 
@@ -23,6 +28,87 @@ func newStuckDetector(t *testing.T, waitHours float64) *StuckDownloadDetector {
 func TestStuckDownloadDetectorName(t *testing.T) {
 	if got := newStuckDetector(t, 6).Name(); got != "stuck_download" {
 		t.Errorf("Name() = %q, want %q", got, "stuck_download")
+	}
+}
+
+// TestStuckDownloadDetect_ReleaseContext verifies the SPEC §3.2 enrichment:
+// release identity, custom format score, the matched episode, and the existing
+// file quality all land in the issue details. Episode/file lookups are
+// best-effort — a nil client or lookup failure must not change detection.
+func TestStuckDownloadDetect_ReleaseContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/episode/105":
+			_ = json.NewEncoder(w).Encode(types.EpisodeResource{ID: 105, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 5, Title: "Test Episode", HasFile: true, EpisodeFileID: 7})
+		case "/api/v3/episodefile/7":
+			_ = json.NewEncoder(w).Encode(types.EpisodeFileResource{ID: 7, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 5, Quality: "HDTV-720p"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := sonarr.New(srv.URL, "key", time.Second, 5)
+	if err != nil {
+		t.Fatalf("sonarr.New: %v", err)
+	}
+
+	d := newStuckDetector(t, 6)
+	item := baseItem()
+	item.DownloadID = "rel-1"
+	item.Title = "Show.S01E05.720p.x265"
+	item.EpisodeID = 105
+	item.CustomFormats = []types.CustomFormat{{ID: 1, Name: "x265 (HD)"}}
+	item.CustomFormatScore = 1000
+
+	iss, err := d.Detect(context.Background(), item, nil, client)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if iss == nil {
+		t.Fatal("Detect returned no issue")
+	}
+
+	got := iss.Details
+	want := map[string]any{
+		"trigger":            "abandoned",
+		"release_id":         "rel-1",
+		"release_title":      "Show.S01E05.720p.x265",
+		"episode_id":         105,
+		"episode_match":      "S01E05 Test Episode",
+		"episode_has_file":   true,
+		"existing_quality":   types.QualityName("HDTV-720p"),
+		"custom_format_score": 1000,
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("Details[%q] = %v, want %v", k, got[k], v)
+		}
+	}
+	cfs, ok := got["custom_formats"].([]string)
+	if !ok || len(cfs) != 1 || cfs[0] != "x265 (HD)" {
+		t.Errorf("Details[custom_formats] = %v, want [x265 (HD)]", got["custom_formats"])
+	}
+}
+
+// TestStuckDownloadDetect_ReleaseContextNoClient: with no client the issue is
+// still produced and carries the release identity already on the queue item.
+func TestStuckDownloadDetect_ReleaseContextNoClient(t *testing.T) {
+	d := newStuckDetector(t, 6)
+	item := baseItem()
+	item.DownloadID = "rel-2"
+	item.Title = "Show.S01E07.1080p"
+	item.CustomFormatScore = 500
+
+	iss := detect(t, d, item, nil)
+	if iss == nil {
+		t.Fatal("Detect returned no issue")
+	}
+	if iss.Details["release_id"] != "rel-2" || iss.Details["custom_format_score"] != 500 {
+		t.Errorf("release context missing without client: %v", iss.Details)
+	}
+	if _, ok := iss.Details["episode_match"]; ok {
+		t.Errorf("episode_match should be absent without client, got %v", iss.Details["episode_match"])
 	}
 }
 

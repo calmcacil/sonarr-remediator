@@ -234,14 +234,18 @@ func singleMutation(t *testing.T, m *MockSonarr) recordedRequest {
 	return muts[0]
 }
 
-// manualImportBody decodes a recorded POST /api/v3/manualimport body.
-func manualImportBody(t *testing.T, r recordedRequest) types.ManualImportRequest {
+// importCommandBody decodes a recorded POST /api/v3/command body (a
+// ManualImport command; the single file is returned).
+func importCommandBody(t *testing.T, r recordedRequest) types.ManualImportCommand {
 	t.Helper()
-	var req types.ManualImportRequest
-	if err := json.Unmarshal(r.Body, &req); err != nil {
-		t.Fatalf("decode manualimport body: %v (body %q)", err, r.Body)
+	var cmd types.ManualImportCommand
+	if err := json.Unmarshal(r.Body, &cmd); err != nil {
+		t.Fatalf("decode import command body: %v (body %q)", err, r.Body)
 	}
-	return req
+	if cmd.Name != "ManualImport" || len(cmd.Files) != 1 {
+		t.Fatalf("import command = %+v, want ManualImport with 1 file (body %q)", cmd, r.Body)
+	}
+	return cmd
 }
 
 // assertNoActions asserts no action.taken / action.recommended entries were
@@ -430,6 +434,18 @@ func setupImportMock(t *testing.T, m *MockSonarr, pr *types.ParseResult) string 
 	}
 	m.SetSeries(testSeriesID, types.SeriesResource{ID: testSeriesID, Title: "Test Show", TVDBID: testTVDBID, Path: "/tv/test-show"})
 	m.SetEpisode(testEpisodeID, expectedEpisode())
+	// The pre-import quality gate (SPEC §3.4 step 6d) fetches each parse
+	// result episode; register them as file-less so the mock serves them
+	// (it 404s unknown ids, like live).
+	for _, ep := range pr.Episodes {
+		m.SetEpisode(ep.ID, types.EpisodeResource{
+			ID:            ep.ID,
+			SeriesID:      testSeriesID,
+			SeasonNumber:  ep.SeasonNumber,
+			EpisodeNumber: ep.EpisodeNumber,
+			HasFile:       false,
+		})
+	}
 	m.SetQualityDefinitions(qualityDefinitions()...)
 	m.SetLanguages(types.Language{ID: 1, Name: "English"})
 	m.SetParseResult(pr)
@@ -443,6 +459,7 @@ func TestScenarioStuckDownloadRemoval(t *testing.T) {
 	defer m.Close()
 	cfg := config.Defaults()
 	cfg.DryRun = false
+	m.SetQueue(stuckItem())
 
 	p := newPipeline(t, m, cfg)
 	dec := mustProcess(t, p, stuckItem(), nil)
@@ -472,6 +489,7 @@ func TestScenarioNotCustomFormatQueueMessage(t *testing.T) {
 	defer m.Close()
 	cfg := config.Defaults()
 	cfg.DryRun = false
+	m.SetQueue(notCustomFormatMessageItem())
 
 	p := newPipeline(t, m, cfg)
 	dec := mustProcess(t, p, notCustomFormatMessageItem(), recentImportAttempt(testSeriesID, testEpisodeID))
@@ -497,6 +515,7 @@ func TestScenarioNotCustomFormatHistoryEvent(t *testing.T) {
 	defer m.Close()
 	cfg := config.Defaults()
 	cfg.DryRun = false
+	m.SetQueue(notCustomFormatHistoryItem())
 
 	p := newPipeline(t, m, cfg)
 	history := append(recentImportAttempt(testSeriesID, testEpisodeID), downloadIgnoredHistory(testSeriesID, testEpisodeID))
@@ -521,6 +540,7 @@ func TestScenarioNotCustomFormatHistoryEvent(t *testing.T) {
 func TestScenarioImportRecoveryHighConfidence(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -533,19 +553,19 @@ func TestScenarioImportRecoveryHighConfidence(t *testing.T) {
 	mustApproved(t, dec)
 
 	post := singleMutation(t, m)
-	if post.Method != http.MethodPost || post.Path != "/api/v3/manualimport" {
-		t.Fatalf("expected POST /api/v3/manualimport, got %s %s", post.Method, post.Path)
+	if post.Method != http.MethodPost || post.Path != "/api/v3/command" {
+		t.Fatalf("expected POST /api/v3/command, got %s %s", post.Method, post.Path)
 	}
-	req := manualImportBody(t, post)
-	if req.EpisodeID != 500 {
-		t.Fatalf("expected manual import for episode 500, got %d", req.EpisodeID)
+	req := importCommandBody(t, post)
+	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != 500 {
+		t.Fatalf("expected manual import for episode 500, got %+v", req.Files)
 	}
 	wantPath := filepath.Join(dir, "Test.Show.S01E05.720p.mkv")
-	if req.Path != wantPath {
-		t.Fatalf("expected import path %q, got %q", wantPath, req.Path)
+	if req.Files[0].Path != wantPath {
+		t.Fatalf("expected import path %q, got %q", wantPath, req.Files[0].Path)
 	}
-	if req.DownloadID != item.DownloadID {
-		t.Fatalf("expected downloadId %q, got %q", item.DownloadID, req.DownloadID)
+	if req.Files[0].DownloadID != item.DownloadID {
+		t.Fatalf("expected downloadId %q, got %q", item.DownloadID, req.Files[0].DownloadID)
 	}
 
 	imported := false
@@ -564,6 +584,7 @@ func TestScenarioImportRecoveryHighConfidence(t *testing.T) {
 func TestScenarioImportRecoveryTVDBSMismatch(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -599,6 +620,7 @@ func TestScenarioImportRecoveryTVDBSMismatch(t *testing.T) {
 func TestScenarioImportRecoveryMediumConfidence(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -633,6 +655,7 @@ func TestScenarioImportRecoveryMediumConfidence(t *testing.T) {
 func TestScenarioRetryRecoversOnLaterAttempt(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	// Short intervals so the retry fires without real timers in the test.
@@ -745,6 +768,7 @@ func TestScenarioRetryExhausted(t *testing.T) {
 func TestScenarioMultiEpisodeImport(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -767,10 +791,13 @@ func TestScenarioMultiEpisodeImport(t *testing.T) {
 	}
 	seen := make(map[int]bool)
 	for _, post := range posts {
-		req := manualImportBody(t, post)
-		seen[req.EpisodeID] = true
-		if req.Path != filepath.Join(dir, "Test.Show.S01E05.720p.mkv") {
-			t.Fatalf("unexpected import path %q", req.Path)
+		req := importCommandBody(t, post)
+		if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 {
+			t.Fatalf("expected one episode per import, got %+v", req.Files)
+		}
+		seen[req.Files[0].EpisodeIDs[0]] = true
+		if req.Files[0].Path != filepath.Join(dir, "Test.Show.S01E05.720p.mkv") {
+			t.Fatalf("unexpected import path %q", req.Files[0].Path)
 		}
 	}
 	if !seen[500] || !seen[501] {
@@ -783,6 +810,7 @@ func TestScenarioMultiEpisodeImport(t *testing.T) {
 func TestScenarioPreImportExistingBetterFile(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -811,6 +839,7 @@ func TestScenarioPreImportExistingBetterFile(t *testing.T) {
 func TestScenarioPreImportExistingLowerQuality(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -825,35 +854,38 @@ func TestScenarioPreImportExistingLowerQuality(t *testing.T) {
 	mustApproved(t, dec)
 
 	post := singleMutation(t, m)
-	if post.Path != "/api/v3/manualimport" {
-		t.Fatalf("expected manual import POST, got %s %s", post.Method, post.Path)
+	if post.Path != "/api/v3/command" {
+		t.Fatalf("expected import command POST, got %s %s", post.Method, post.Path)
 	}
-	req := manualImportBody(t, post)
-	if req.EpisodeID != 500 {
-		t.Fatalf("expected import for episode 500, got %d", req.EpisodeID)
+	req := importCommandBody(t, post)
+	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != 500 {
+		t.Fatalf("expected import for episode 500, got %+v", req.Files)
 	}
 }
 
 func TestScenarioPreImportNoExistingFile(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
 	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 3, 1))
-	// No explicit episode entry: the mock defaults to hasFile=false.
+	// No file on the episode: set explicitly (the mock 404s unknown ids,
+	// like live).
+	m.SetEpisode(500, types.EpisodeResource{ID: 500, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: false})
 	p := newPipeline(t, m, cfg)
 	dec := mustProcess(t, p, importFailedItem(432, dir, ""), importFailedHistory())
 	mustApproved(t, dec)
 
 	post := singleMutation(t, m)
-	if post.Path != "/api/v3/manualimport" {
-		t.Fatalf("expected manual import POST, got %s %s", post.Method, post.Path)
+	if post.Path != "/api/v3/command" {
+		t.Fatalf("expected import command POST, got %s %s", post.Method, post.Path)
 	}
-	req := manualImportBody(t, post)
-	if req.EpisodeID != 500 {
-		t.Fatalf("expected import for episode 500, got %d", req.EpisodeID)
+	req := importCommandBody(t, post)
+	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != 500 {
+		t.Fatalf("expected import for episode 500, got %+v", req.Files)
 	}
 }
 
@@ -955,6 +987,7 @@ func TestScenarioExclusionRootPath(t *testing.T) {
 func TestScenarioPathTranslation(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
+	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -986,6 +1019,9 @@ func TestScenarioPathTranslation(t *testing.T) {
 
 	m.SetSeries(testSeriesID, types.SeriesResource{ID: testSeriesID, Title: "Test Show", TVDBID: testTVDBID, Path: "/tv/test-show"})
 	m.SetEpisode(testEpisodeID, expectedEpisode())
+	// The pre-import gate fetches the parse result's episode; register it
+	// as file-less (the mock 404s unknown ids, like live).
+	m.SetEpisode(500, types.EpisodeResource{ID: 500, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: false})
 	m.SetQualityDefinitions(qualityDefinitions()...)
 	m.SetLanguages(types.Language{ID: 1, Name: "English"})
 	m.SetParseResult(singleEpisodeParse(testTVDBID, 3, 1))
@@ -1006,9 +1042,9 @@ func TestScenarioPathTranslation(t *testing.T) {
 
 	// The manual import body must use the Sonarr-rooted path too.
 	post := singleMutation(t, m)
-	req := manualImportBody(t, post)
-	if req.Path != wantSonarrPath {
-		t.Fatalf("manual import path: expected Sonarr view %q, got %q", wantSonarrPath, req.Path)
+	req := importCommandBody(t, post)
+	if req.Files[0].Path != wantSonarrPath {
+		t.Fatalf("manual import path: expected Sonarr view %q, got %q", wantSonarrPath, req.Files[0].Path)
 	}
 }
 
@@ -1020,6 +1056,7 @@ func TestScenarioRemoveQueueV4BlocklistParam(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.RemoveBrokenDownloads.BlocklistRelease = true
+	m.SetQueue(stuckItem())
 
 	p := newPipeline(t, m, cfg)
 	dec := mustProcess(t, p, stuckItem(), nil)
@@ -1034,5 +1071,77 @@ func TestScenarioRemoveQueueV4BlocklistParam(t *testing.T) {
 	}
 	if got := mut.Query.Get("blocklist"); got != "" {
 		t.Fatalf("Sonarr v3 blocklist param must not be used, got %q (query %v)", got, mut.Query)
+	}
+}
+
+// ─── Extra: v4 parse 204 and the evaluate-only reprocess endpoint ─────
+
+// TestScenarioV4ParsePath204NoImport: against a v4 server the parse
+// endpoint answers 204 No Content to path= calls, so the parse-based
+// failed-import pipeline (§3.4) must not import anything — the honest
+// outcome is a no-op (SPEC §12). This is the regression guard for the live
+// bug where path= parse silently returned an empty result.
+func TestScenarioV4ParsePath204NoImport(t *testing.T) {
+	m := NewMockSonarr() // default version 4
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+	cfg.Automation.AutoManualImport.Enabled = true
+
+	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 3, 1))
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, importFailedItem(424, dir, ""), importFailedHistory())
+	mustApproved(t, dec)
+
+	noMutations(t, m)
+	if n := len(m.Posts()); n != 0 {
+		t.Fatalf("no import command may be issued on v4 (parse 204), got %d POSTs", n)
+	}
+}
+
+// TestScenarioReprocessEndpointNeverImports pins the regression guard:
+// POST /api/v3/manualimport is evaluate-only on live v4 — it returns a
+// verdict with rejections and never imports, and the tracked download stays
+// in the queue. The real import step is the ManualImport command.
+func TestScenarioReprocessEndpointNeverImports(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	item := types.QueueItem{ID: 900, DownloadID: "reprocess-dl-1"}
+	m.SetQueue(item)
+
+	body := `[{"path":"/downloads/Show.S01E01.mkv","seriesId":1,"seasonNumber":1,"episodeIds":[1],"quality":{"quality":{"id":5}},"languages":[{"id":1}],"downloadId":"reprocess-dl-1"}]`
+	resp, err := http.Post(m.URL()+"/api/v3/manualimport", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST reprocess: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reprocess status = %d, want 200", resp.StatusCode)
+	}
+	var verdict []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&verdict); err != nil {
+		t.Fatalf("decode verdict: %v", err)
+	}
+	if len(verdict) != 1 {
+		t.Fatalf("verdict items = %d, want 1", len(verdict))
+	}
+	rej, _ := verdict[0]["rejections"].([]any)
+	if len(rej) == 0 {
+		t.Fatal("evaluate-only must return a rejection verdict, got none")
+	}
+
+	// The tracked download must still be in the queue: reprocess never
+	// imports, so nothing may have been removed.
+	gresp, err := http.Get(m.URL() + "/api/v3/queue")
+	if err != nil {
+		t.Fatalf("GET queue: %v", err)
+	}
+	defer gresp.Body.Close()
+	var page types.Page[types.QueueItem]
+	if err := json.NewDecoder(gresp.Body).Decode(&page); err != nil {
+		t.Fatalf("decode queue: %v", err)
+	}
+	if len(page.Records) != 1 || page.Records[0].ID != 900 {
+		t.Fatalf("queue after reprocess = %+v, want item 900 still present", page.Records)
 	}
 }

@@ -89,6 +89,7 @@ type AutomationConfig struct {
 	RemoveBrokenDownloads RemoveBrokenDownloadsConfig `yaml:"removeBrokenDownloads"`
 	RetryImports          RetryImportsConfig          `yaml:"retryImports"`
 	AutoManualImport      AutoManualImportConfig      `yaml:"autoManualImport"`
+	Reconcile             ReconcileConfig             `yaml:"reconcile"`
 }
 
 // RemoveNotCustomFormatConfig gates "not a custom format upgrade" removal.
@@ -118,6 +119,13 @@ type RetryImportsConfig struct {
 type AutoManualImportConfig struct {
 	Enabled           bool `yaml:"enabled"`
 	MinimumConfidence int  `yaml:"minimumConfidence"`
+}
+
+// ReconcileConfig gates episode reconciliation (SPEC §3.2): when enabled,
+// targeted hits are grouped by episode and the highest-scoring release is
+// imported while the rest are removed from the queue.
+type ReconcileConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // LoggingConfig configures the structured logger.

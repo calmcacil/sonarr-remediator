@@ -2,6 +2,7 @@ package detectors
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -43,30 +44,32 @@ func (d *StuckDownloadDetector) Detect(ctx context.Context, item types.QueueItem
 
 	// 1. Sonarr reports an error on the item.
 	if item.ErrorMessage != "" || item.TrackedDownloadStatus == "error" {
-		return d.issue(item, "sonarr_error", nil, nil, now), nil
+		return d.issue(item, "sonarr_error", nil, d.releaseContext(ctx, item, client), now), nil
 	}
 
 	// 2. The item's files were found but none are eligible for import.
 	if matchAny([]string{"No files found are eligible for import"}, messages) {
-		return d.issue(item, "missing_files", nil, nil, now), nil
+		return d.issue(item, "missing_files", nil, d.releaseContext(ctx, item, client), now), nil
 	}
 
 	// 3. Abandoned: completed but no import attempt (success or failure)
 	//    within the last waitHours.
 	if item.Status == "completed" && d.noRecentImportAttempt(history, item, now) {
-		return d.issue(item, "abandoned", importAttempts(history, item), nil, now), nil
+		return d.issue(item, "abandoned", importAttempts(history, item), d.releaseContext(ctx, item, client), now), nil
 	}
 
 	// 4. Age timeout: in the queue longer than waitHours with no import
 	//    in progress.
 	if now.Sub(item.Added) > d.waitHours && !importInProgress(item) {
-		return d.issue(item, "age_timeout", nil, nil, now), nil
+		return d.issue(item, "age_timeout", nil, d.releaseContext(ctx, item, client), now), nil
 	}
 
 	// 5. Repeated import failure: at least three failed imports for the
 	//    item's episode.
 	if fails := failedImports(history, item); len(fails) >= 3 {
-		return d.issue(item, "repeated_import_failure", fails, map[string]any{"count": len(fails)}, now), nil
+		extra := d.releaseContext(ctx, item, client)
+		extra["count"] = len(fails)
+		return d.issue(item, "repeated_import_failure", fails, extra, now), nil
 	}
 
 	return nil, nil
@@ -107,6 +110,40 @@ func importInProgress(item types.QueueItem) bool {
 		return true
 	}
 	return false
+}
+
+// releaseContext gathers the release's identity, its matched episode, and its
+// custom format score (SPEC §3.2): release id/title, episode id and S/E match,
+// whether the episode already has a file (and at what quality), and the
+// release's custom formats and score. All lookups are best-effort: failures
+// are logged and dropped, never fatal to detection.
+func (d *StuckDownloadDetector) releaseContext(ctx context.Context, item types.QueueItem, client *sonarr.Client) map[string]any {
+	extra := map[string]any{
+		"release_id":          item.DownloadID,
+		"release_title":       item.Title,
+		"episode_id":          item.EpisodeID,
+		"custom_format_score": item.CustomFormatScore,
+		"custom_formats":      item.CustomFormatNames(),
+	}
+	if client == nil || item.EpisodeID == 0 {
+		return extra
+	}
+	ep, err := client.GetEpisode(ctx, item.EpisodeID)
+	if err != nil {
+		d.logger.Warn("failed to fetch matched episode", "item", item.CompositeKey(), "error", err)
+		return extra
+	}
+	extra["episode_match"] = fmt.Sprintf("S%02dE%02d %s", ep.SeasonNumber, ep.EpisodeNumber, ep.Title)
+	extra["episode_has_file"] = ep.HasFile
+	if ep.HasFile && ep.EpisodeFileID != 0 {
+		ef, err := client.GetEpisodeFile(ctx, ep.EpisodeFileID)
+		if err != nil {
+			d.logger.Warn("failed to fetch existing episode file", "item", item.CompositeKey(), "error", err)
+			return extra
+		}
+		extra["existing_quality"] = ef.Quality
+	}
+	return extra
 }
 
 // issue assembles the stuck-download issue and logs the detection.

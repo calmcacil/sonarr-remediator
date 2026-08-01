@@ -359,6 +359,47 @@ func TestImportFailedRetryScheduled(t *testing.T) {
 	}
 }
 
+// ─── reconcile gates ────────────────────────────────────────────────────
+
+func TestEvaluateReconcileGates(t *testing.T) {
+	item := queueItem(nil)
+	tests := []struct {
+		name   string
+		mutate func(*config.Config)
+		item   types.QueueItem
+		retry  bool
+		failAt string // "" means approved
+	}{
+		{"approved", func(c *config.Config) { c.Automation.Reconcile.Enabled = true }, item, false, ""},
+		{"rule disabled", func(c *config.Config) { c.Automation.Reconcile.Enabled = false }, item, false, "rule.enabled"},
+		{"status not eligible",
+			func(c *config.Config) { c.Automation.Reconcile.Enabled = true },
+			func() types.QueueItem { it := item; it.Status = "downloading"; return it }(), false, "queue.status"},
+		{"importing state",
+			func(c *config.Config) { c.Automation.Reconcile.Enabled = true },
+			func() types.QueueItem { it := item; it.TrackedDownloadState = "importing"; return it }(), false, "queue.trackedDownloadState"},
+		{"retry scheduled",
+			func(c *config.Config) { c.Automation.Reconcile.Enabled = true }, item, true, "retry.scheduled"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseConfig()
+			tc.mutate(cfg)
+			e, _ := newEngine(t, cfg)
+			e.SetSonarrUp(true)
+			if tc.retry {
+				e.SetRetryActive(item.CompositeKey(), true)
+			}
+			dec := mustEvaluate(t, e, issue(types.IssueReconcile, tc.item))
+			if tc.failAt == "" {
+				assertApproved(t, dec, types.ActionReconcile)
+			} else {
+				assertRejected(t, dec, tc.failAt)
+			}
+		})
+	}
+}
+
 // ─── unknown issue type (no config-derived gates) ───────────────────────
 
 func TestEvaluateUnknownIssueType(t *testing.T) {

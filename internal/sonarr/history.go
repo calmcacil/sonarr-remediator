@@ -36,9 +36,9 @@ func (c *Client) GetHistory(ctx context.Context, params types.HistoryParams) ([]
 	if params.EpisodeID != 0 {
 		q.Set("episodeId", strconv.Itoa(params.EpisodeID))
 	}
-	var items []types.HistoryItem
-	if err := c.do(ctx, http.MethodGet, "/api/v3/history", q, nil, &items); err != nil {
+	var page types.Page[types.HistoryItem]
+	if err := c.do(ctx, http.MethodGet, "/api/v3/history", q, nil, &page); err != nil {
 		return nil, err
 	}
-	return items, nil
+	return page.Records, nil
 }

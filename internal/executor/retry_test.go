@@ -288,6 +288,7 @@ func TestScheduleDisabled(t *testing.T) {
 	cfg.Automation.RetryImports.Enabled = false
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10)}
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // retry re-parses path= like the v3 API
 	sched, _, _ := newScheduler(t, cfg, m)
 
 	if err := sched.Schedule(context.Background(), retryableItem(), nil); err != nil {
@@ -365,6 +366,7 @@ func TestRetryLifecycleRecoversOnSecondAttempt(t *testing.T) {
 	cfg := retryConfig()
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10), interval(20)}
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // retry re-parses path= like the v3 API
 	item := retryableItem()
 	item.OutputPath = file // the expected output file, checked by fire()
 	m.setQueueItems([]types.QueueItem{item})
@@ -407,7 +409,7 @@ func TestRetryLifecycleRecoversOnSecondAttempt(t *testing.T) {
 	if n := m.parseCallCount(); n != 1 {
 		t.Fatalf("parse calls = %d, want 1", n)
 	}
-	if n := m.manualImportCount(); n != 1 {
+	if n := m.commandCount(); n != 1 {
 		t.Fatalf("manual imports = %d, want 1", n)
 	}
 	line := findEvent(t, buf, "retry.succeeded")
@@ -426,11 +428,12 @@ func TestRetryManualImportFailureSchedulesNext(t *testing.T) {
 	cfg := retryConfig()
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10), interval(20)}
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // retry re-parses path= like the v3 API
 	item := retryableItem()
 	item.OutputPath = dir
 	m.setQueueItems([]types.QueueItem{item})
 	m.setParseResp(goodParse())
-	m.setManualImportStatus(http.StatusBadRequest) // first manual import fails
+	m.setCommandStatus(http.StatusBadRequest) // first manual import fails
 	sched, buf, _ := newScheduler(t, cfg, m)
 	key := item.CompositeKey()
 
@@ -445,15 +448,15 @@ func TestRetryManualImportFailureSchedulesNext(t *testing.T) {
 		st := sched.attempts[key]
 		return st != nil && st.attempt == 2
 	})
-	if n := m.manualImportCount(); n != 1 {
+	if n := m.commandCount(); n != 1 {
 		t.Fatalf("manual imports = %d, want 1 after first failed attempt", n)
 	}
 	findEvent(t, buf, "retry.failed")
 
 	// Second attempt: manual import now succeeds.
-	m.setManualImportStatus(http.StatusOK)
+	m.setCommandStatus(http.StatusOK)
 	waitFor(t, 5*time.Second, func() bool { return !sched.Active(key) })
-	if n := m.manualImportCount(); n != 2 {
+	if n := m.commandCount(); n != 2 {
 		t.Fatalf("manual imports = %d, want 2 after retry", n)
 	}
 	findEvent(t, buf, "retry.succeeded")
@@ -463,6 +466,7 @@ func TestRetryExhaustion(t *testing.T) {
 	cfg := retryConfig()
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10), interval(20)}
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // retry re-parses path= like the v3 API
 	item := retryableItem()
 	item.OutputPath = filepath.Join(t.TempDir(), "does-not-exist.mkv") // both attempts fail
 	m.setQueueItems([]types.QueueItem{item})
@@ -497,6 +501,7 @@ func TestRetryCancelledWhenItemGone(t *testing.T) {
 	cfg := retryConfig()
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10)}
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // retry re-parses path= like the v3 API
 	item := retryableItem()
 	item.OutputPath = dir
 	m.setQueueItems(nil) // item vanished from the queue
@@ -518,7 +523,7 @@ func TestRetryCancelledWhenItemGone(t *testing.T) {
 	if n := m.parseCallCount(); n != 0 {
 		t.Fatalf("parse calls = %d, want 0 after cancellation", n)
 	}
-	if n := m.manualImportCount(); n != 0 {
+	if n := m.commandCount(); n != 0 {
 		t.Fatalf("manual imports = %d, want 0 after cancellation", n)
 	}
 }
@@ -533,6 +538,7 @@ func TestRetryCancelledWhenImportsDisabled(t *testing.T) {
 	cfg := retryConfig()
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10)}
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // retry re-parses path= like the v3 API
 	item := retryableItem()
 	item.OutputPath = dir
 	m.setQueueItems([]types.QueueItem{item})
@@ -551,7 +557,7 @@ func TestRetryCancelledWhenImportsDisabled(t *testing.T) {
 	if got := msgOf(line); !strings.Contains(got, "retry imports disabled, cancelling retries") {
 		t.Fatalf("msg = %q, want disabled phrasing", got)
 	}
-	if n := m.manualImportCount(); n != 0 {
+	if n := m.commandCount(); n != 0 {
 		t.Fatalf("manual imports = %d, want 0 after cancellation", n)
 	}
 }
@@ -566,6 +572,7 @@ func TestRetryStopCancelsTimers(t *testing.T) {
 	cfg := retryConfig()
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10)}
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // retry re-parses path= like the v3 API
 	item := retryableItem()
 	item.OutputPath = dir
 	m.setQueueItems([]types.QueueItem{item})
@@ -589,7 +596,7 @@ func TestRetryStopCancelsTimers(t *testing.T) {
 	if n := m.parseCallCount(); n != 0 {
 		t.Fatalf("parse calls = %d, want 0 (timer fired after Stop)", n)
 	}
-	if n := m.manualImportCount(); n != 0 {
+	if n := m.commandCount(); n != 0 {
 		t.Fatalf("manual imports = %d, want 0 (timer fired after Stop)", n)
 	}
 	for _, ev := range []string{"retry.succeeded", "retry.failed", "retry.file-missing", "import.failed-all-retries"} {
@@ -647,4 +654,41 @@ func TestItemInQueue(t *testing.T) {
 			t.Fatal("itemInQueue = false on API error, want true (retry must survive transient errors)")
 		}
 	})
+}
+
+// TestRetryV4Parse204NoCommand: on v4 the retry's re-parse (path=) is a 204
+// No Content, so every attempt fails at the parse step — no import command
+// may be issued (SPEC §12; §3.6 is v3-targeted like §3.4).
+func TestRetryV4Parse204NoCommand(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "Show.Name.S01E01.mkv")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg := retryConfig()
+	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{interval(10), interval(20)}
+	m := newMockSonarr(t) // default version 4: path= parse answers 204
+	item := retryableItem()
+	item.OutputPath = dir
+	m.setQueueItems([]types.QueueItem{item})
+	m.setParseResp(goodParse()) // deliberately ignored on v4
+	sched, buf, _ := newScheduler(t, cfg, m)
+	key := item.CompositeKey()
+
+	if err := sched.Schedule(context.Background(), item, nil); err != nil {
+		t.Fatalf("Schedule: %v", err)
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		sched.mu.Lock()
+		defer sched.mu.Unlock()
+		st := sched.attempts[key]
+		return st != nil && st.attempt == 2
+	})
+	if n := m.commandCount(); n != 0 {
+		t.Fatalf("manual imports = %d, want 0 on v4 (parse 204)", n)
+	}
+	if !hasEvent(buf, "retry.parse-failed") {
+		t.Fatalf("expected retry.parse-failed log; logs:\n%s", buf.String())
+	}
 }

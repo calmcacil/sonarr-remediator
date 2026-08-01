@@ -189,16 +189,19 @@ func (r *RetryScheduler) fire(key string, item types.QueueItem) {
 		return
 	}
 
-	req := types.ManualImportRequest{
-		Path:         sonarrPath,
-		SeriesID:     item.SeriesID,
-		SeasonNumber: parsed.ParsedEpisodeInfo.SeasonNumber,
-		EpisodeID:    item.EpisodeID,
-		Quality:      parsed.ParsedEpisodeInfo.Quality,
-		Language:     parsed.ParsedEpisodeInfo.Language,
-		DownloadID:   item.DownloadID,
+	cmd := types.ManualImportCommand{
+		Name:       "ManualImport",
+		ImportMode: "auto",
+		Files: []types.ManualImportCommandFile{{
+			Path:       sonarrPath,
+			SeriesID:   item.SeriesID,
+			EpisodeIDs: []int{item.EpisodeID},
+			Quality:    parsed.ParsedEpisodeInfo.Quality,
+			Languages:  []types.LanguageModel{parsed.ParsedEpisodeInfo.Language},
+			DownloadID: item.DownloadID,
+		}},
 	}
-	if err := r.client.ManualImport(r.baseCtx, req); err != nil {
+	if err := r.client.ManualImportCommand(r.baseCtx, cmd); err != nil {
 		r.scheduleNext(key, item, current, false, err)
 		return
 	}

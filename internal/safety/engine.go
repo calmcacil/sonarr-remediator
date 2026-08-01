@@ -183,6 +183,14 @@ func (e *Engine) gatesFor(issue types.Issue) []types.CheckResult {
 				Passed: autoImport || retryImports},
 			e.retryCheck(key),
 		}
+	case types.IssueReconcile:
+		enabled := e.cfg.Automation.Reconcile.Enabled
+		return []types.CheckResult{
+			{Check: "rule.enabled", Expected: "true", Actual: strconv.FormatBool(enabled), Passed: enabled},
+			{Check: "queue.status", Expected: "completed|warning|failed", Actual: item.Status, Passed: eligibleStatus(item.Status)},
+			{Check: "queue.trackedDownloadState", Expected: "!= importing", Actual: item.TrackedDownloadState, Passed: item.TrackedDownloadState != "importing"},
+			e.retryCheck(key),
+		}
 	default:
 		// No config-derived gates for unknown/other issue types.
 		return nil

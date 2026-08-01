@@ -14,6 +14,7 @@ import (
 	"github.com/calmcacil/sonarr-remediator/internal/config"
 	"github.com/calmcacil/sonarr-remediator/internal/detectors"
 	"github.com/calmcacil/sonarr-remediator/internal/safety"
+	"github.com/calmcacil/sonarr-remediator/internal/selector"
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	"github.com/calmcacil/sonarr-remediator/internal/types"
 )
@@ -120,9 +121,12 @@ func (m *QueueMonitor) Run(ctx context.Context) {
 	}
 }
 
-// poll fetches the queue, updates the tracked state, and evaluates every item.
-// A fetch error only skips the cycle; connectivity is owned by the health
-// monitor.
+// poll fetches the queue, updates the tracked state, and evaluates every
+// item. A fetch error only skips the cycle; connectivity is owned by the
+// health monitor. Non-targeted issues (e.g. import_failed) are emitted
+// immediately; targeted hits (stuck download, not a custom format upgrade)
+// are grouped by episode and emitted as one reconcile issue per plan, with
+// any unmatched hit keeping its per-item issue (SPEC §3.2).
 func (m *QueueMonitor) poll(ctx context.Context) {
 	items, err := m.client.GetQueue(ctx)
 	if err != nil {
@@ -130,9 +134,103 @@ func (m *QueueMonitor) poll(ctx context.Context) {
 		return
 	}
 	m.updateLastSeen(items)
+	var hits []targetedHit
 	for i := range items {
-		m.evaluateItem(ctx, items[i], items)
+		winner := m.evaluateItem(ctx, items[i], items)
+		if winner == nil {
+			continue
+		}
+		if winner.Type == types.IssueStuckDownload || winner.Type == types.IssueNotCustomFormat {
+			hits = append(hits, targetedHit{item: winner.QueueItem, issue: *winner})
+			continue
+		}
+		m.emit(*winner)
 	}
+	m.reconcile(ctx, hits)
+}
+
+// targetedHit is one removal-class issue together with its queue item,
+// collected for episode reconciliation.
+type targetedHit struct {
+	item  types.QueueItem
+	issue types.Issue
+}
+
+// reconcile maps the poll's targeted hits by episode (SPEC §3.2): each plan
+// selects the highest custom-format-score release per episode as its import
+// winner and marks the rest for discard. One reconcile issue is emitted per
+// plan — carrying the plan for the executor — and hits not covered by any
+// plan (no episode match) keep their per-item issue. The plan is also logged
+// as an informational reconcile.plan event.
+func (m *QueueMonitor) reconcile(ctx context.Context, hits []targetedHit) {
+	items := make([]types.QueueItem, 0, len(hits))
+	for _, h := range hits {
+		items = append(items, h.item)
+	}
+	plans, _ := selector.Reconcile(items)
+
+	covered := make(map[int]bool, len(items))
+	for _, p := range plans {
+		covered[p.Winner.ID] = true
+		for _, d := range p.Discards {
+			covered[d.ID] = true
+		}
+		m.logger.Info("episode reconciliation: import highest-scoring release, discard rest",
+			"event", "reconcile.plan",
+			"episode_key", p.EpisodeKey(),
+			"winner", slog.GroupValue(
+				slog.Int("id", p.Winner.ID),
+				slog.String("release", p.Winner.Title),
+				slog.Int("score", p.Winner.CustomFormatScore),
+			),
+			"discards", discardLogs(p.Discards),
+		)
+		for _, h := range hits {
+			if h.item.ID == p.Winner.ID {
+				m.emitReconcileIssue(p, h.issue)
+				break
+			}
+		}
+	}
+	for _, h := range hits {
+		if !covered[h.item.ID] {
+			m.emit(h.issue)
+		}
+	}
+}
+
+// emitReconcileIssue emits one reconcile issue for a plan. The issue anchors
+// on the plan's winner (safety gates and decision logging use it) and carries
+// the full plan plus the winner issue's release context in its details.
+func (m *QueueMonitor) emitReconcileIssue(p types.ReconcilePlan, winner types.Issue) {
+	details := map[string]any{types.DetailsReconcilePlan: p}
+	for _, k := range []string{"episode_match", "episode_has_file", "existing_quality"} {
+		if v, ok := winner.Details[k]; ok {
+			details[k] = v
+		}
+	}
+	m.emit(types.Issue{
+		Type:       types.IssueReconcile,
+		Severity:   types.SeverityWarning,
+		QueueItem:  p.Winner,
+		Details:    details,
+		DetectedAt: time.Now(),
+	})
+}
+
+// discardLog is the JSON shape of one discarded release in a reconcile plan.
+type discardLog struct {
+	ID      int    `json:"id"`
+	Release string `json:"release"`
+	Score   int    `json:"score"`
+}
+
+func discardLogs(discards []types.QueueItem) []discardLog {
+	out := make([]discardLog, 0, len(discards))
+	for _, d := range discards {
+		out = append(out, discardLog{ID: d.ID, Release: d.Title, Score: d.CustomFormatScore})
+	}
+	return out
 }
 
 // updateLastSeen snapshots the current queue, dropping items that left it.
@@ -153,8 +251,11 @@ func (m *QueueMonitor) clearLastSeen() {
 }
 
 // evaluateItem runs the built-in analysis and every detector over one queue
-// item, then emits the winning issue (SPEC §3.7).
-func (m *QueueMonitor) evaluateItem(ctx context.Context, item types.QueueItem, all []types.QueueItem) {
+// item and returns the winning issue (SPEC §3.7), or nil when the item
+// produced no issue. Emission is the caller's responsibility: poll emits
+// non-targeted winners immediately and routes targeted hits through episode
+// reconciliation.
+func (m *QueueMonitor) evaluateItem(ctx context.Context, item types.QueueItem, all []types.QueueItem) *types.Issue {
 	// History is fetched on demand: only for eligible items and only when at
 	// least one detector is registered (SPEC §3.1).
 	var history []types.HistoryItem
@@ -188,9 +289,7 @@ func (m *QueueMonitor) evaluateItem(ctx context.Context, item types.QueueItem, a
 			winner = iss
 		}
 	}
-	if winner != nil {
-		m.emit(*winner)
-	}
+	return winner
 }
 
 // higherPriority reports whether a outranks b: the lower priority int wins

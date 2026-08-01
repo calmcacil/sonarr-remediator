@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -42,16 +43,19 @@ type mockSonarr struct {
 	deleteStatus         int
 	parseResp            *types.ParseResult
 	parseStatus          int
-	manualImportStatus   int
+	commandStatus        int
+	keepInQueue          bool // POST /api/v3/command does not clear the item
+	manualImportPreview  []types.ManualImportFile
 	downloadClients      []types.DownloadClientResource
 	downloadClientStatus int
 	series               map[int]types.SeriesResource
 	episodes             map[int]types.EpisodeResource
 	episodeFiles         map[int]types.EpisodeFileResource
 
-	requests      []string // "METHOD path?query" for every request
-	parseCalls    []string // paths sent to /api/v3/parse
-	manualImports []map[string]any
+	requests   []string // "METHOD path?query" for every request
+	parseCalls []string // paths sent to /api/v3/parse
+	previewCalls []string // downloadIds sent to GET /api/v3/manualimport
+	commands   []map[string]any
 }
 
 func newMockSonarr(t *testing.T) *mockSonarr {
@@ -61,7 +65,7 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 		queueStatus:          http.StatusOK,
 		deleteStatus:         http.StatusOK,
 		parseStatus:          http.StatusOK,
-		manualImportStatus:   http.StatusOK,
+		commandStatus:        http.StatusOK,
 		downloadClientStatus: http.StatusOK,
 		series:               make(map[int]types.SeriesResource),
 		episodes:             make(map[int]types.EpisodeResource),
@@ -81,12 +85,38 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 		m.mu.Lock()
 		status, items := m.queueStatus, m.queueItems
 		m.mu.Unlock()
-		writeJSON(w, status, items)
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		// Real Sonarr serves the queue inside a paged envelope.
+		writeJSON(w, http.StatusOK, types.Page[types.QueueItem]{Page: 1, PageSize: len(items), TotalRecords: len(items), Records: items})
 	})
 	mux.HandleFunc("DELETE /api/v3/queue/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.record(r)
+		id, err := strconv.Atoi(r.PathValue("id"))
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		m.mu.Lock()
 		status := m.deleteStatus
+		if status == http.StatusOK {
+			// Live answers 404 for an id that is not in the queue.
+			known := false
+			out := m.queueItems[:0]
+			for _, it := range m.queueItems {
+				if it.ID == id {
+					known = true
+					continue
+				}
+				out = append(out, it)
+			}
+			m.queueItems = out
+			if !known {
+				status = http.StatusNotFound
+			}
+		}
 		m.mu.Unlock()
 		writeJSON(w, status, nil)
 	})
@@ -94,21 +124,74 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 		m.record(r)
 		m.mu.Lock()
 		m.parseCalls = append(m.parseCalls, r.URL.Query().Get("path"))
-		status, resp := m.parseStatus, m.parseResp
+		status, resp, version := m.parseStatus, m.parseResp, m.version
 		m.mu.Unlock()
+		if strings.HasPrefix(version, "4") && r.URL.Query().Get("path") != "" {
+			// Live v4 answers 204 No Content to path= parse calls; only
+			// title= parses on v4. v3 parses path= normally.
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		writeJSON(w, status, resp)
 	})
-	mux.HandleFunc("POST /api/v3/manualimport", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v3/manualimport", func(w http.ResponseWriter, r *http.Request) {
+		m.record(r)
+		dl := r.URL.Query().Get("downloadId")
+		m.mu.Lock()
+		m.previewCalls = append(m.previewCalls, dl)
+		resp := m.manualImportPreview
+		known := false
+		for _, it := range m.queueItems {
+			if it.DownloadID != "" && it.DownloadID == dl {
+				known = true
+				break
+			}
+		}
+		m.mu.Unlock()
+		if dl == "" {
+			// Live throws on the empty downloadId (empty path).
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if !known {
+			// An unknown downloadId yields an empty preview, not files.
+			writeJSON(w, http.StatusOK, []types.ManualImportFile{})
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+	})
+	mux.HandleFunc("POST /api/v3/command", func(w http.ResponseWriter, r *http.Request) {
 		m.record(r)
 		var body map[string]any
 		if r.Body != nil {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
 		m.mu.Lock()
-		m.manualImports = append(m.manualImports, body)
-		status := m.manualImportStatus
+		m.commands = append(m.commands, body)
+		status := m.commandStatus
+		if status == http.StatusOK && !m.keepInQueue {
+			// A successful completed manual import removes the tracked
+			// download; a failed command leaves it in the queue.
+			if files, ok := body["files"].([]any); ok && len(files) > 0 {
+				if f, ok := files[0].(map[string]any); ok {
+					if dl, ok := f["downloadId"].(string); ok {
+						out := m.queueItems[:0]
+						for _, it := range m.queueItems {
+							if it.DownloadID != dl {
+								out = append(out, it)
+							}
+						}
+						m.queueItems = out
+					}
+				}
+			}
+		}
 		m.mu.Unlock()
-		writeJSON(w, status, nil)
+		if status == http.StatusOK {
+			// Live answers 201 Created with the command resource.
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, map[string]any{"name": "ManualImport", "status": "started"})
 	})
 	mux.HandleFunc("GET /api/v3/downloadclient", func(w http.ResponseWriter, r *http.Request) {
 		m.record(r)
@@ -220,9 +303,19 @@ func (m *mockSonarr) setParseStatus(code int) {
 	m.parseStatus = code
 	m.mu.Unlock()
 }
-func (m *mockSonarr) setManualImportStatus(code int) {
+func (m *mockSonarr) setCommandStatus(code int) {
 	m.mu.Lock()
-	m.manualImportStatus = code
+	m.commandStatus = code
+	m.mu.Unlock()
+}
+func (m *mockSonarr) setKeepInQueue(v bool) {
+	m.mu.Lock()
+	m.keepInQueue = v
+	m.mu.Unlock()
+}
+func (m *mockSonarr) setPreviewResp(resp []types.ManualImportFile) {
+	m.mu.Lock()
+	m.manualImportPreview = resp
 	m.mu.Unlock()
 }
 func (m *mockSonarr) setDownloadClients(clients []types.DownloadClientResource) {
@@ -243,6 +336,12 @@ func (m *mockSonarr) setSeries(s types.SeriesResource) {
 func (m *mockSonarr) setEpisode(ep types.EpisodeResource) {
 	m.mu.Lock()
 	m.episodes[ep.ID] = ep
+	m.mu.Unlock()
+}
+
+func (m *mockSonarr) setEpisodeFile(ef types.EpisodeFileResource) {
+	m.mu.Lock()
+	m.episodeFiles[ef.ID] = ef
 	m.mu.Unlock()
 }
 
@@ -268,18 +367,18 @@ func (m *mockSonarr) deleteURIs() []string {
 	}
 	return out
 }
-func (m *mockSonarr) manualImportCount() int {
+func (m *mockSonarr) commandCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.manualImports)
+	return len(m.commands)
 }
-func (m *mockSonarr) manualImportBody(i int) map[string]any {
+func (m *mockSonarr) commandBody(i int) map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if i < 0 || i >= len(m.manualImports) {
+	if i < 0 || i >= len(m.commands) {
 		return nil
 	}
-	return m.manualImports[i]
+	return m.commands[i]
 }
 func (m *mockSonarr) parseCallCount() int {
 	m.mu.Lock()
@@ -570,6 +669,8 @@ func TestExecuteRemoveQueueReal(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newMockSonarr(t)
 			m.setVersion(tc.version)
+			// The removed item must exist in the queue, like live.
+			m.setQueueItems([]types.QueueItem{{ID: 42, SeriesID: 1, EpisodeID: 1, DownloadID: "d1"}})
 			cfg := executorTestConfig()
 			cfg.Automation.RemoveNotCustomFormat.BlocklistRelease = tc.ncfBlocklist
 			cfg.Automation.RemoveBrokenDownloads.BlocklistRelease = tc.brokenBlocklist
@@ -672,7 +773,7 @@ func TestExecuteManualImportRetryableSchedules(t *testing.T) {
 	if !sched.Active(item.CompositeKey()) {
 		t.Fatalf("expected a retry to be scheduled for %q", item.CompositeKey())
 	}
-	if n := m.manualImportCount(); n != 0 {
+	if n := m.commandCount(); n != 0 {
 		t.Fatalf("retryable failure must not import immediately, got %d POSTs", n)
 	}
 	line := findEvent(t, buf, "action.taken")
@@ -692,6 +793,7 @@ func TestExecuteManualImportNonRetryableRecovers(t *testing.T) {
 	}
 
 	m := newMockSonarr(t)
+	m.setVersion("3.0.0.900") // §3.4 parses path= like the v3 API
 	m.setSeries(types.SeriesResource{ID: 1, Title: "Show", TVDBID: 12345})
 	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 1, SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot"})
 	m.setParseResp(goodParse())
@@ -715,22 +817,29 @@ func TestExecuteManualImportNonRetryableRecovers(t *testing.T) {
 	if err := ex.Execute(context.Background(), dec); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if n := m.manualImportCount(); n != 1 {
+	if n := m.commandCount(); n != 1 {
 		t.Fatalf("manual imports = %d, want 1 (recovery must import)", n)
 	}
-	body := m.manualImportBody(0)
+	body := m.commandBody(0)
 	if body == nil {
-		t.Fatal("no manual import body recorded")
+		t.Fatal("no manual import command recorded")
 	}
+	files, _ := body["files"].([]any)
+	if len(files) != 1 {
+		t.Fatalf("command files = %v, want one file", files)
+	}
+	file0, _ := files[0].(map[string]any)
 	for key, want := range map[string]any{
 		"path":       file,
 		"seriesId":   float64(1),
-		"episodeId":  float64(10),
 		"downloadId": "hash-abc",
 	} {
-		if got := body[key]; got != want {
-			t.Fatalf("manual import body[%q] = %v, want %v", key, got, want)
+		if got := file0[key]; got != want {
+			t.Fatalf("command file[%q] = %v, want %v", key, got, want)
 		}
+	}
+	if eps, _ := file0["episodeIds"].([]any); len(eps) != 1 || eps[0] != float64(10) {
+		t.Fatalf("command file[episodeIds] = %v, want [10]", file0["episodeIds"])
 	}
 	if sched.Active(item.CompositeKey()) {
 		t.Fatalf("non-retryable error must not schedule retries")
@@ -766,7 +875,7 @@ func TestExecuteManualImportNoCandidateFiles(t *testing.T) {
 	if err := ex.Execute(context.Background(), dec); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if n := m.manualImportCount(); n != 0 {
+	if n := m.commandCount(); n != 0 {
 		t.Fatalf("manual imports = %d, want 0 (no candidates)", n)
 	}
 	if n := m.parseCallCount(); n != 0 {
@@ -948,5 +1057,353 @@ func TestChecksToLog(t *testing.T) {
 	}
 	if got := checksToLog(nil); got == nil || len(got) != 0 {
 		t.Fatalf("checksToLog(nil) = %v (nil=%v), want empty non-nil", got, got == nil)
+	}
+}
+
+// ─── Execute: episode reconciliation (SPEC §3.2) ───────────────────────
+
+// reconcileItem builds a queue item carrying the release-context fields the
+// reconcile path reads.
+func reconcileItem(id int) types.QueueItem {
+	return types.QueueItem{
+		ID:                id,
+		SeriesID:          42,
+		EpisodeID:         10,
+		SeriesTitle:       "Test Show",
+		EpisodeTitle:      "S01E01",
+		Title:             "Release-" + strconv.Itoa(id),
+		DownloadID:        "dl-" + strconv.Itoa(id),
+		Status:            "completed",
+		CustomFormatScore: 1000,
+		Quality:           types.QualityModel{Quality: types.Quality{ID: 4, Name: "HDTV-1080p"}},
+	}
+}
+
+// reconcileDecision wraps testDecision with the reconcile issue shape: the
+// winner as the issue item and the full plan in the details.
+func reconcileDecision(action types.ActionType, approved, dryRun bool, plan types.ReconcilePlan) types.Decision {
+	dec := testDecision(action, approved, dryRun, plan.Winner)
+	dec.Issue.Type = types.IssueReconcile
+	dec.Issue.Details = map[string]any{types.DetailsReconcilePlan: plan}
+	return dec
+}
+
+func TestExecuteReconcileMissingPlan(t *testing.T) {
+	m := newMockSonarr(t)
+	cfg := executorTestConfig()
+	logger, _ := newTestLogger(t)
+	ex := New(m.client(t), cfg, nil, logger)
+
+	dec := testDecision(types.ActionReconcile, true, true, reconcileItem(1))
+	dec.Issue.Type = types.IssueReconcile
+	dec.Issue.Details = map[string]any{} // no reconcile_plan
+
+	if err := ex.Execute(context.Background(), dec); err == nil {
+		t.Fatal("Execute returned nil, want error for missing reconcile_plan details")
+	}
+}
+
+func TestExecuteReconcileDryRun(t *testing.T) {
+	m := newMockSonarr(t)
+	// Existing file scores 0; the winner scores 1000 → upgrade decision.
+	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 1, HasFile: true, EpisodeFileID: 55})
+	m.setEpisodeFile(types.EpisodeFileResource{ID: 55, Quality: "HDTV-720p", CustomFormatScore: 0})
+
+	winner := reconcileItem(1)
+	discard := reconcileItem(2)
+	discard.CustomFormatScore = 500
+	plan := types.ReconcilePlan{SeriesID: 42, EpisodeID: 10, Winner: winner, Discards: []types.QueueItem{discard}}
+
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), reconcileDecision(types.ActionReconcile, true, true, plan)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if dels := m.deleteURIs(); len(dels) != 0 {
+		t.Fatalf("dry-run must not delete, got %v", dels)
+	}
+	if n := m.commandCount(); n != 0 {
+		t.Fatalf("dry-run must not import, got %d POSTs", n)
+	}
+	line := findEvent(t, buf, "action.recommended")
+	if dry, ok := line["dry_run"].(bool); !ok || !dry {
+		t.Fatalf("dry_run = %v, want true", line["dry_run"])
+	}
+	if got := msgOf(line); !strings.Contains(got, "Would have import queue item 1") {
+		t.Fatalf("message = %q, want dry-run import phrasing", got)
+	}
+}
+
+func TestExecuteReconcileImportsUpgradeWinner(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setSeries(types.SeriesResource{ID: 42, Title: "Test Show", TVDBID: 12345})
+	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot", HasFile: true, EpisodeFileID: 55})
+	m.setEpisodeFile(types.EpisodeFileResource{ID: 55, Quality: "HDTV-720p", CustomFormatScore: 0})
+	season := 1
+	m.setPreviewResp([]types.ManualImportFile{{
+		Path:         "/downloads/Test.Show.S01E01.720p.mkv",
+		Name:         "Test.Show.S01E01.720p.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 4, Name: "HDTV-1080p"}},
+		Languages:    []types.LanguageModel{{ID: 1, Name: "English"}},
+		SeasonNumber: &season,
+		Episodes:     []types.EpisodeLookup{{ID: 10, EpisodeNumber: 1, SeasonNumber: 1}},
+	}})
+
+	winner := reconcileItem(1)
+	discard := reconcileItem(2)
+	discard.CustomFormatScore = 500
+	plan := types.ReconcilePlan{SeriesID: 42, EpisodeID: 10, Winner: winner, Discards: []types.QueueItem{discard}}
+	// Both items exist in the queue: the winner is imported (clearing it),
+	// the discard is deleted — live 404s on unknown queue ids.
+	m.setQueueItems([]types.QueueItem{winner, discard})
+
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), reconcileDecision(types.ActionReconcile, true, false, plan)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Winner imported via the ManualImport command (equal existing quality is
+	// bypassed: the score-based upgrade decision governs).
+	if n := m.commandCount(); n != 1 {
+		t.Fatalf("manual imports = %d, want 1; requests: %v", n, m.requestURIs())
+	}
+	body := m.commandBody(0)
+	files, _ := body["files"].([]any)
+	if len(files) != 1 {
+		t.Fatalf("command files = %v, want one file", files)
+	}
+	f, _ := files[0].(map[string]any)
+	if got := body["name"]; got != "ManualImport" {
+		t.Fatalf("command name = %v, want ManualImport", got)
+	}
+	if got := body["importMode"]; got != "auto" {
+		t.Fatalf("importMode = %v, want auto", got)
+	}
+	if got := f["episodeIds"]; !reflect.DeepEqual(got, []any{float64(10)}) {
+		t.Fatalf("episodeIds = %v, want [10]", got)
+	}
+	if got := f["path"]; got != "/downloads/Test.Show.S01E01.720p.mkv" {
+		t.Fatalf("path = %v, want the previewed file path", got)
+	}
+	if got := f["downloadId"]; got != "dl-1" {
+		t.Fatalf("downloadId = %v, want the queue item's downloadId", got)
+	}
+	if got := f["seriesId"]; got != float64(42) {
+		t.Fatalf("seriesId = %v, want 42", got)
+	}
+	// Discard removed from the download client too (removeFromClient=true).
+	dels := m.deleteURIs()
+	if len(dels) != 1 || !strings.Contains(dels[0], "DELETE /api/v3/queue/2?removeFromClient=true") {
+		t.Fatalf("deletes = %v, want [DELETE /api/v3/queue/2?removeFromClient=true]", dels)
+	}
+	findMsg(t, buf, "Imported reconciliation winner 1")
+	findMsg(t, buf, "Removed discarded release 2")
+}
+
+// TestExecuteReconcileNoCandidateNoMutation covers the case where the winner
+// cannot be imported because Sonarr's preview has no importable file for the
+// download (e.g. the download was already removed). The executor must not
+// report a mutation that never happened.
+func TestExecuteReconcileNoCandidateNoMutation(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 1, HasFile: true, EpisodeFileID: 55})
+	m.setEpisodeFile(types.EpisodeFileResource{ID: 55, Quality: "HDTV-720p", CustomFormatScore: 0})
+	// No preview files: nothing to import.
+	m.setPreviewResp(nil)
+
+	winner := reconcileItem(1)
+	plan := types.ReconcilePlan{SeriesID: 42, EpisodeID: 10, Winner: winner}
+
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), reconcileDecision(types.ActionReconcile, true, false, plan)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if n := m.commandCount(); n != 0 {
+		t.Fatalf("manual imports = %d, want 0", n)
+	}
+	if dels := m.deleteURIs(); len(dels) != 0 {
+		t.Fatalf("deletes = %v, want none", dels)
+	}
+	if strings.Contains(buf.String(), "Imported reconciliation winner 1") {
+		t.Fatalf("executor claimed a successful import that never happened:\n%s", buf.String())
+	}
+	findMsg(t, buf, "No importable candidate for reconciliation winner 1; left in queue")
+	line := findEvent(t, buf, "action.skipped")
+	if got := msgOf(line); !strings.Contains(got, "No importable candidate") {
+		t.Fatalf("skipped message = %q", got)
+	}
+}
+
+func TestExecuteReconcileCommandFailure(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 1, HasFile: true, EpisodeFileID: 55})
+	m.setEpisodeFile(types.EpisodeFileResource{ID: 55, Quality: "HDTV-720p", CustomFormatScore: 0})
+	season := 1
+	m.setPreviewResp([]types.ManualImportFile{{
+		Path:         "/downloads/Test.Show.S01E01.720p.mkv",
+		Name:         "Test.Show.S01E01.720p.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 4, Name: "HDTV-1080p"}},
+		Languages:    []types.LanguageModel{{ID: 1, Name: "English"}},
+		SeasonNumber: &season,
+		Episodes:     []types.EpisodeLookup{{ID: 10, EpisodeNumber: 1, SeasonNumber: 1}},
+	}})
+	m.setCommandStatus(http.StatusBadRequest) // terminal failure
+
+	winner := reconcileItem(1)
+	plan := types.ReconcilePlan{SeriesID: 42, EpisodeID: 10, Winner: winner}
+	m.setQueueItems([]types.QueueItem{winner})
+
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), reconcileDecision(types.ActionReconcile, true, false, plan)); err == nil {
+		t.Fatal("Execute returned nil, want error when the import command fails")
+	}
+	if strings.Contains(buf.String(), "Imported reconciliation winner 1") {
+		t.Fatalf("executor claimed an import that failed:\n%s", buf.String())
+	}
+	line := findEvent(t, buf, "action.error")
+	if got := msgOf(line); !strings.Contains(got, "Failed to import reconciliation winner 1") {
+		t.Fatalf("error message = %q", got)
+	}
+}
+
+func TestExecuteReconcileNoFileImports(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setSeries(types.SeriesResource{ID: 42, Title: "Test Show", TVDBID: 12345})
+	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot"}) // HasFile=false
+	season := 1
+	m.setPreviewResp([]types.ManualImportFile{{
+		Path:         "/downloads/Test.Show.S01E01.720p.mkv",
+		Name:         "Test.Show.S01E01.720p.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 4, Name: "HDTV-1080p"}},
+		Languages:    []types.LanguageModel{{ID: 1, Name: "English"}},
+		SeasonNumber: &season,
+		Episodes:     []types.EpisodeLookup{{ID: 10, EpisodeNumber: 1, SeasonNumber: 1}},
+	}})
+
+	winner := reconcileItem(1)
+	plan := types.ReconcilePlan{SeriesID: 42, EpisodeID: 10, Winner: winner}
+	m.setQueueItems([]types.QueueItem{winner})
+
+	cfg := executorTestConfig()
+	logger, _ := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), reconcileDecision(types.ActionReconcile, true, false, plan)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if n := m.commandCount(); n != 1 {
+		t.Fatalf("manual imports = %d, want 1 (no existing file: always an upgrade)", n)
+	}
+}
+
+func TestExecuteReconcileRemovesNonUpgradeWinner(t *testing.T) {
+	m := newMockSonarr(t)
+	// Existing file scores 1000; the winner scores 0 → not an upgrade.
+	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 1, HasFile: true, EpisodeFileID: 55})
+	m.setEpisodeFile(types.EpisodeFileResource{ID: 55, Quality: "Bluray-1080p", CustomFormatScore: 1000})
+
+	winner := reconcileItem(1)
+	winner.CustomFormatScore = 0
+	discard := reconcileItem(2)
+	discard.CustomFormatScore = 0
+	plan := types.ReconcilePlan{SeriesID: 42, EpisodeID: 10, Winner: winner, Discards: []types.QueueItem{discard}}
+	m.setQueueItems([]types.QueueItem{winner, discard})
+
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), reconcileDecision(types.ActionReconcile, true, false, plan)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if n := m.commandCount(); n != 0 {
+		t.Fatalf("manual imports = %d, want 0 (winner is not an upgrade)", n)
+	}
+	dels := m.deleteURIs()
+	if len(dels) != 2 {
+		t.Fatalf("deletes = %v, want winner and discard removed", dels)
+	}
+	for _, id := range []int{1, 2} {
+		if !strings.Contains(dels[0]+" "+dels[1], fmt.Sprintf("DELETE /api/v3/queue/%d?removeFromClient=true", id)) {
+			t.Errorf("missing DELETE for queue item %d: %v", id, dels)
+		}
+	}
+	findMsg(t, buf, "Removed non-upgrade winner 1")
+	findMsg(t, buf, "Removed discarded release 2")
+}
+
+func TestExecuteReconcileDiscardDeleteError(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 1, HasFile: true, EpisodeFileID: 55})
+	m.setEpisodeFile(types.EpisodeFileResource{ID: 55, Quality: "Bluray-1080p", CustomFormatScore: 1000})
+	m.setDeleteStatus(http.StatusInternalServerError)
+
+	winner := reconcileItem(1)
+	winner.CustomFormatScore = 0
+	discard := reconcileItem(2)
+	discard.CustomFormatScore = 0
+	plan := types.ReconcilePlan{SeriesID: 42, EpisodeID: 10, Winner: winner, Discards: []types.QueueItem{discard}}
+
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), reconcileDecision(types.ActionReconcile, true, false, plan)); err == nil {
+		t.Fatal("Execute returned nil, want error when deletes fail")
+	}
+	if !hasEvent(buf, "action.error") {
+		t.Fatalf("expected action.error log:\n%s", buf.String())
+	}
+}
+
+// TestExecuteRemoveQueueUnknownID404: live answers 404 for a queue id that
+// does not exist; the executor must surface the failure instead of claiming
+// a silent success.
+func TestExecuteRemoveQueueUnknownID404(t *testing.T) {
+	m := newMockSonarr(t)
+	// The item is deliberately NOT registered in the mock queue.
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	client := m.client(t)
+	detectVersion(t, client)
+	ex := New(client, cfg, nil, logger)
+
+	item := types.QueueItem{ID: 42, SeriesID: 1, EpisodeID: 1, DownloadID: "d1"}
+	dec := testDecision(types.ActionRemoveQueue, true, false, item)
+	dec.Issue.Type = types.IssueStuckDownload
+
+	if err := ex.Execute(context.Background(), dec); err == nil {
+		t.Fatal("Execute returned nil, want error when the queue id is unknown (404)")
+	}
+	if strings.Contains(buf.String(), "Removed queue item 42") {
+		t.Fatalf("executor claimed a removal that 404'd:\n%s", buf.String())
+	}
+	line := findEvent(t, buf, "action.error")
+	if got := msgOf(line); !strings.Contains(got, "Failed to remove queue item 42") {
+		t.Fatalf("error message = %q", got)
 	}
 }

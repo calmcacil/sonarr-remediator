@@ -134,6 +134,63 @@ Detects downloads that have become permanently stuck and will never import succe
 - Automation rule enabled
 - Dry-run check
 
+**Release context (enrichment, non-blocking):** every detection records the
+release's identity and episode match in the issue details and decision log:
+`release_id` (download id), `release_title`, `episode_id`, `episode_match`
+(S/E + title when the episode resolves), `episode_has_file`, `existing_quality`
+(when the episode already has a file), `custom_formats`, and
+`custom_format_score`. Lookup failures are logged and dropped — they never
+block or change a detection.
+
+**Episode reconciliation (executed):** after each poll the queue monitor maps
+every targeted hit (items that produced a stuck-download or not-custom-format
+issue) by episode via `selector.Reconcile`. For each episode the release with
+the highest `customFormatScore` is selected as the winner (ties: earliest
+`added`, then input order); every other release for that episode is a
+discard. Items without an episode match are left to the per-item flow.
+
+Each plan is emitted as one `reconcile` issue (anchored on the winner, with
+the full plan in the `reconcile_plan` details) and flows through the safety
+engine and executor like any other action; per-item issues for plan-covered
+items are suppressed so no item is acted on twice. The plan is also logged as
+an informational `reconcile.plan` event.
+
+Execution (`automation.reconcile.enabled`, default true) decides per plan:
+
+1. **Upgrade check** (`selector.IsUpgrade`): the winner imports when it is an
+   upgrade over the existing episode file — no file: always an upgrade;
+   strictly higher `customFormatScore` than the existing file: upgrade;
+   equal scores: only if the winner's quality is strictly better (unknown
+   weights never upgrade).
+2. **Import winner**: `recovery.ReconcileImport` — matching is Sonarr's
+   job, exactly like the UI manual-import dialog. The queue item's download
+   is previewed via
+   `GET /api/v3/manualimport?downloadId=…&filterExistingFiles=false`
+   (Sonarr derives the folder from the tracked download and anchors the
+   series/episode match to the grab history; `filterExistingFiles=false` is
+   required because every reconciled episode already has a media file and
+   the default filter would drop the candidate). The file Sonarr matched to
+   the episode — or the single file in a one-file folder — is then posted
+   back as a `ManualImport` command (`POST /api/v3/command`, the same
+   command the UI's Import button sends) with Sonarr's own quality,
+   languages, and episode IDs. Sonarr executes the import and removes the
+   tracked download on completion; the pipeline proves the import by
+   polling `GET /api/v3/queue` until the item's ID disappears (bounded
+   poll), never by the command's acknowledgement alone. A failed command
+   (non-2xx) or a queue item that survives the poll window means the import
+   did not commit: the pipeline reports it as not imported, logs an
+   `action.skipped` event, and leaves the winner in the queue — it never
+   logs a successful import that did not occur. The download folder never
+   needs to be accessible to the agent's filesystem.
+3. **Remove non-upgrade winner**: `DELETE /api/v3/queue/{id}?removeFromClient=true`.
+4. **Remove every discard**: `DELETE /api/v3/queue/{id}?removeFromClient=true`,
+   unconditionally — the plan has resolved them. Discards are processed even
+   if the winner's import fails.
+
+Dry-run logs the intended winner action (import/remove) and discard count as
+`action.recommended` and performs no mutations; live mode executes the calls
+above.
+
 ---
 
 ### 3.3 "Not a Custom Format Upgrade" Removal
@@ -234,16 +291,15 @@ For downloads where the download completed but Sonarr could not automatically ma
       with equal or better files; import to remaining episodes.
 
 7. IMPORT (if confidence >= threshold)
-   For each qualifying episode, call POST /api/v3/manualimport.
-   Sonarr's manual import endpoint accepts a single episodeId per request
-   for single-episode files. For multi-episode files, make one call per
-   episode ID. Request body includes:
-   - path (as seen by Sonarr's filesystem)
-   - seriesId, seasonNumber
-   - episodeId (single int — call once per episode)
-   - quality (from parse result), language (from parse result)
-   - downloadId (from queue item)
-   Import mode is not sent in the request; Sonarr uses its configured default.
+   For each qualifying episode, call a ManualImport command (POST
+   /api/v3/command); one episode per file. Request body includes:
+   - name: "ManualImport", importMode: "auto"
+   - files[0].path (as seen by Sonarr's filesystem)
+   - files[0].seriesId, files[0].episodeIds (one entry per call)
+   - files[0].quality (from parse result), languages (from parse result)
+   - files[0].downloadId (from queue item)
+   Import mode is fixed to "auto"; Sonarr imports without a custom-format
+   upgrade gate, matching the UI's Import button.
 
 8. LOG
    Record action (or recommended action in dry-run) with full confidence breakdown.
@@ -491,7 +547,8 @@ func (c *Client) GetHistory(ctx context.Context, params HistoryParams) ([]Histor
 func (c *Client) GetSystemStatus(ctx context.Context) (SystemStatus, error)
 func (c *Client) RemoveQueueItem(ctx context.Context, id int, blocklist bool) error
 func (c *Client) Parse(ctx context.Context, path string) (*ParseResult, error)
-func (c *Client) ManualImport(ctx context.Context, req ManualImportRequest) error
+func (c *Client) ManualImportPreview(ctx context.Context, downloadID string) ([]ManualImportFile, error)
+func (c *Client) ManualImportCommand(ctx context.Context, cmd ManualImportCommand) error
 func (c *Client) GetQualityDefinitions(ctx context.Context) ([]QualityDefinition, error)
 func (c *Client) GetLanguages(ctx context.Context) ([]Language, error)
 func (c *Client) GetEpisode(ctx context.Context, episodeID int) (*EpisodeResource, error)
@@ -635,13 +692,25 @@ Supported action types: `remove_queue` (with optional blocklist), `manual_import
 ```go
 // ─── Queue ───────────────────────────────────────────────────────────
 
+// Page is Sonarr's paged-list envelope (GET /api/v3/queue, /api/v3/history):
+// records are nested under "records" rather than served as a bare array.
+type Page[T any] struct {
+    Page         int `json:"page"`
+    PageSize     int `json:"pageSize"`
+    TotalRecords int `json:"totalRecords"`
+    Records      []T `json:"records"`
+}
+
 type QueueItem struct {
     ID                    int             `json:"id"`
     SeriesID              int             `json:"seriesId"`
     EpisodeID             int             `json:"episodeId"`
-    SeriesTitle           string          `json:"seriesTitle"`
+    SeriesTitle           string          `json:"seriesTitle"` // not present on Sonarr v4 queue payloads; kept for tests and non-v4 compatibility
     EpisodeTitle          string          `json:"episodeTitle"`
-    Quality               string          `json:"quality"`
+    Title                 string          `json:"title"` // release title (Sonarr v4)
+    Quality               QualityModel    `json:"quality"`
+    CustomFormats         []CustomFormat  `json:"customFormats"`
+    CustomFormatScore     int             `json:"customFormatScore"`
     Size                  int64           `json:"size"`
     Status                string          `json:"status"`                // queued|paused|downloading|completed|warning|failed
     TrackedDownloadStatus string          `json:"trackedDownloadStatus"` // ok|warning|error
@@ -651,6 +720,11 @@ type QueueItem struct {
     DownloadID            string          `json:"downloadId"`
     OutputPath            string          `json:"outputPath"`
     Added                 time.Time       `json:"added"`
+}
+
+type CustomFormat struct {
+    ID   int    `json:"id"`
+    Name string `json:"name"`
 }
 
 type StatusMessage struct {
@@ -666,7 +740,7 @@ type HistoryItem struct {
     EpisodeID   int               `json:"episodeId"`
     SourceTitle string            `json:"sourceTitle"`
     EventType   string            `json:"eventType"`  // "grabbed"|"downloadFolderImported"|"downloadFailedImport"|"downloadIgnored"|"episodeFileDeleted"
-    Quality     string            `json:"quality"`
+    Quality     QualityModel      `json:"quality"`
     Date        time.Time         `json:"date"`
     Data        map[string]string `json:"data"`
 }
@@ -685,15 +759,21 @@ type HistoryParams struct {
 
 // ─── Manual Import ───────────────────────────────────────────────────
 
-type ManualImportRequest struct {
-    Path         string        `json:"path"`
-    SeriesID     int           `json:"seriesId"`
-    SeasonNumber int           `json:"seasonNumber"`
-    EpisodeID    int           `json:"episodeId"`   // single episode per call; issue multiple calls for multi-ep files
-    Quality      QualityModel  `json:"quality"`
-    Language     LanguageModel `json:"language"`
-    DownloadID   string        `json:"downloadId"`
-    // ImportMode is intentionally not included; Sonarr uses its configured default.
+type ManualImportCommand struct {
+    Name       string                    `json:"name"`
+    ImportMode string                    `json:"importMode"`
+    Files      []ManualImportCommandFile `json:"files"`
+}
+
+// ManualImportCommandFile is one file inside a ManualImportCommand. Episodes
+// are plural and carry the season implicitly; seasonNumber is not sent.
+type ManualImportCommandFile struct {
+    Path       string         `json:"path"`
+    SeriesID   int            `json:"seriesId"`
+    EpisodeIDs []int          `json:"episodeIds"`
+    Quality    QualityModel   `json:"quality"`
+    Languages  []LanguageModel `json:"languages"`
+    DownloadID string         `json:"downloadId"`
 }
 
 type QualityModel struct {
@@ -761,15 +841,17 @@ type EpisodeResource struct {
 }
 
 type EpisodeFileResource struct {
-    ID                  int    `json:"id"`
-    SeriesID            int    `json:"seriesId"`
-    SeasonNumber        int    `json:"seasonNumber"`
-    EpisodeNumber       int    `json:"episodeNumber"`
-    RelativePath        string `json:"relativePath"`
-    Quality             string `json:"quality"`
-    QualityCutoffNotMet bool   `json:"qualityCutoffNotMet"`
-    Size                int64  `json:"size"`
+    ID                  int         `json:"id"`
+    SeriesID            int         `json:"seriesId"`
+    SeasonNumber        int         `json:"seasonNumber"`
+    EpisodeNumber       int         `json:"episodeNumber"`
+    RelativePath        string      `json:"relativePath"`
+    Quality             QualityName `json:"quality"`
+    QualityCutoffNotMet bool        `json:"qualityCutoffNotMet"`
+    Size                int64       `json:"size"`
 }
+// QualityName accepts either a plain quality name string or Sonarr's quality
+// object ({quality:{name:...},revision:{...}}), normalizing to the name.
 // Note: Sonarr's episode file API response does not include a quality ID directly.
 // Quality comparison in the pre-import check maps the existing file's quality name
 // to a QualityDefinition (fetched at startup) to obtain a weight; if the lookup
@@ -807,9 +889,12 @@ type DownloadClientResource struct {
 }
 
 type DownloadClientField struct {
-    Name  string `json:"name"`
-    Value string `json:"value"`
+    Name  string     `json:"name"`
+    Value FlexString `json:"value"`
 }
+// FlexString accepts string, number, boolean, or null JSON values: Sonarr
+// download client fields are heterogeneous (e.g. a port is a number), while
+// the root-path fields the agent reads are strings.
 // Root folder extraction: iterate Fields, look for Name == "downloadFolder"
 // or Name == "tvDownloadFolder". The Value is the download root path (string).
 
@@ -830,8 +915,27 @@ const (
     ActionRemoveQueue   ActionType = "remove_queue"
     ActionRetry         ActionType = "retry"
     ActionManualImport  ActionType = "manual_import"
+    ActionReconcile     ActionType = "reconcile"
 )
 ```
+
+### Reconcile Plan
+
+```go
+type ReconcilePlan struct {
+    SeriesID  int          `json:"seriesId"`
+    EpisodeID int          `json:"episodeId"`
+    Winner    QueueItem    `json:"winner"`
+    Discards  []QueueItem  `json:"discards"`
+}
+
+func (p ReconcilePlan) EpisodeKey() string // "seriesId:episodeId"
+```
+
+The plan travels from the queue monitor to the executor inside
+`Issue.Details["reconcile_plan"]`; the issue itself is type `reconcile` and
+anchors on the winner. `selector.IsUpgrade(releaseScore, existingScore,
+releaseWeight, existingWeight, weightsOK)` implements the upgrade decision.
 
 ---
 
@@ -854,6 +958,19 @@ Each automation setting generates the checks that gate its action. All checks wi
 | `other_queue_item_for_episode` | `false` |
 
 The check tables in §3.2 and §3.3 enumerate these gates for each feature. The engine records the actual value of every check in the decision log, so dry-run output explains each pass/fail.
+
+**`automation.reconcile` gates the `reconcile` issue (one per episode plan, §3.2):**
+
+| Check | Expected |
+|---|---|
+| `rule.enabled` | `true` (automation.reconcile.enabled) |
+| `queue.status` | `completed\|warning\|failed` |
+| `queue.trackedDownloadState` | `!= importing` |
+| `retry.scheduled` | `false` |
+
+Approval covers the whole plan: the winner's import-or-removal and every
+discard removal. The decision log adds `episode_key`, `upgrade` (winner's
+upgrade decision), and `discards` (id/release/score list).
 
 ### Global Constraints (Always Enforced)
 
@@ -969,6 +1086,12 @@ automation:
 
   autoManualImport:
     enabled: false
+
+  # Episode reconciliation: map targeted hits by episode, import the highest
+  # custom-format-score release as an upgrade, remove the rest with
+  # removeFromClient=true (SPEC §3.2).
+  reconcile:
+    enabled: true
     minimumConfidence: 95
 
 # ─── Logging ───
@@ -1033,12 +1156,13 @@ Structured JSON logs to stdout (Docker-native), implemented with the standard li
 | `action.taken` | `info` | `false` | "Removed queue item 420" |
 | `action.recommended` | `info` | `true` | "Would have removed queue item 420" |
 | `action.skipped` | `info` | — | "Skipped queue item 420: cooldown active" |
+| `reconcile.plan` | `info` | — | "episode reconciliation: import highest-scoring release, discard rest" (episode_key, winner, discards) |
 | `import.failed-all-retries` | `warn` | — | "Import permanently failed after 6 retries — manual intervention required" |
 | `error.sonarr-unreachable` | `error` | — | "Sonarr at http://sonarr:8989 not responding; monitors paused" |
 
 **Event-specific fields:**
 
-- Action events: `event`, `decision_id`, `item` (key, id, title, series, episode), `trigger`, `checks` (see §7), `action`, `reason` (for `action.skipped`).
+- Action events: `event`, `decision_id`, `item` (key, id, title, series, episode), `trigger`, `checks` (see §7), `action`, `reason` (for `action.skipped`). Reconcile action events additionally carry `episode_key`, `upgrade`, and `discards` (id/release/score list).
 - Recovery events: `event`, `item`, `confidence`, `confidence_breakdown` (tvdb, season, episode, quality, language), `candidate_path`.
 - Retry events: `event`, `item`, `attempt`, `retries_left`, `next_retry_at`.
 
@@ -1072,13 +1196,16 @@ Every approved action produces exactly one action event line. Routine detections
 6. Failed import → TVDB match → medium confidence → log-only with breakdown.
 7. Failed import → transient error → retry schedule → recovery on retry N.
 8. Failed import → all retries exhausted → `import.failed-all-retries` log event emitted.
-9. Multi-episode file → import via multiple `episodeId` calls.
+9. Multi-episode file → import via multiple ManualImport commands (one episode per command).
 10. Pre-import check finds existing better file → import rejected.
 11. Pre-import check: existing file has lower quality → import proceeds.
 12. Pre-import check: episode has no file → import proceeds.
 13. Dry-run enabled → all detections work, zero mutations, `action.recommended` entries emitted.
 14. Exclusion list (seriesId) match → item skipped entirely.
 15. Exclusion list (rootPath prefix) match → item skipped entirely.
+16. Two same-episode targeted hits with `dryRun=false` → winner imported (ManualImport command via POST /api/v3/command, queue item cleared), discard removed (`DELETE /api/v3/queue/{id}?removeFromClient=true`), winner never deleted, `reconcile.plan` logged.
+17. Failed-import recovery against a **v4** mock (parse `path=` answers 204) → no import, no mutation — the honest no-op the live API produces.
+18. `POST /api/v3/manualimport` (reprocess) is evaluate-only → rejection verdict, tracked download stays in the queue, nothing imported.
 16. Path translation: agent path correctly mapped to Sonarr path.
 
 ### Test Fixtures
@@ -1150,18 +1277,59 @@ On receiving `SIGTERM` or `SIGINT`:
 
 The agent uses the Sonarr v3 API (used by both Sonarr v3 and v4 installations). The agent detects the running version at startup and adapts where minor differences exist.
 
-### Queue
-- `GET /api/v3/queue` — List queue items.
-- `DELETE /api/v3/queue/{id}` — Remove item. Params: `blocklist=true` (v3) or `removeFromClient=true` (v4 fallback, version-detected).
-
 ### History
-- `GET /api/v3/history` — Event history. Params: `page`, `pageSize`, `sortKey`, `sortDirection`, `eventType` (int: 1=grabbed, 3=imported, 4=failedImport, 7=ignored), `episodeId`, `seriesId`.
+- `GET /api/v3/history` — Event history (paged envelope; `records` is unwrapped). Params: `page`, `pageSize`, `sortKey`, `sortDirection`, `eventType` (int: 1=grabbed, 3=imported, 4=failedImport, 7=ignored), `episodeId`, `seriesId`.
 
 ### Manual Import
-- `POST /api/v3/manualimport` — Execute manual import. Accepts `episodeId` (single int).
+- `GET /api/v3/manualimport` — Preview the importable files of a tracked
+  download. The agent mirrors the UI call exactly: `downloadId=<id>` only
+  (Sonarr resolves the folder from the tracked download and anchors the
+  series/episode match to the grab history — without it Sonarr answers
+  "Unknown Series" even for files it can match) plus
+  `filterExistingFiles=false` (the default filter drops files whose episode
+  already has a media file). Response: one item per file with Sonarr's
+  `quality`, `languages`, matched `episodes`, and `rejections`. Contract
+  details verified against prod v4: an empty `downloadId` is HTTP 500 (the
+  empty path throws); a `downloadId` Sonarr does not know returns `[]`; a
+  known downloadId whose files are not on disk yet (still downloading)
+  also 500s.
+- `POST /api/v3/command` — Execute a manual import via the `ManualImport`
+  command (the same command the UI's Import button sends). Body:
+  `{"name": "ManualImport", "importMode": "auto", "files": [{path,
+  seriesId, episodeIds, quality, languages, downloadId}]}`. Sonarr v4
+  answers **201 Created** with the command resource and executes the import
+  unconditionally (no custom-format upgrade gate), removing the tracked
+  download on completion — success is proven by polling `GET /api/v3/queue`
+  until the item's ID disappears (bounded by the poll timeout); a surviving
+  item or non-2xx response means the import did not commit and the item is
+  left in the queue.
+- `POST /api/v3/manualimport` — **Evaluate-only** on live v4
+  (`ManualImportController.ReprocessItems`): it decodes a JSON array of
+  `{path, seriesId, seasonNumber, episodeIds, quality, languages,
+  downloadId}` and returns one verdict item per file with `rejections`
+  (e.g. "Not an upgrade for existing episode file(s)") — it **never
+  imports**. The dev-test mock models this faithfully so a regression to
+  this endpoint fails tests (verdict, no import, queue unchanged).
 
 ### Parse
 - `GET /api/v3/parse` — Parse a file path or title. Param: `path` or `title`.
+  **Version-dependent**: v4 answers HTTP 204 No Content to `path=` even for
+  files already in the library (verified against prod) and parses only
+  `title=` (whose response has no `series` object and empty `episodes`); v3
+  parses `path=` normally. The failed-import recovery pipeline (§3.4) and
+  import retries (§3.6) are v3-targeted and not exercised against v4; the
+  reconciliation path (§3.2) never calls parse, using the manual-import
+  preview instead. Reworking §3.4 onto the preview flow is a known
+  follow-up.
+
+### Queue
+- `GET /api/v3/queue` — Paged envelope (`{page, pageSize, totalRecords,
+  records}`); the client requests `page=1&pageSize=1000` and unwraps
+  `records`.
+- `DELETE /api/v3/queue/{id}` — Remove item. Params: `blocklist=true` (v3)
+  or `removeFromClient=true` (v4 fallback, version-detected). A successful
+  delete removes the item; an unknown id is HTTP 404 `{"message":
+  "NotFound"}` (verified against prod).
 
 ### System
 - `GET /api/v3/system/status` — System status. Response includes `version` (string).
@@ -1171,11 +1339,11 @@ The agent uses the Sonarr v3 API (used by both Sonarr v3 and v4 installations). 
 - `GET /api/v3/language` — Language profiles with `id`, `name`.
 
 ### Download Clients
-- `GET /api/v3/downloadclient` — Download client configurations. Each client has `fields[]` containing `{name, value}`. Root paths are in fields named `downloadFolder` or `tvDownloadFolder`.
+- `GET /api/v3/downloadclient` — Download client configurations (bare array). Each client has `fields[]` containing `{name, value}` where `value` is a string, number, boolean, or null (decoded as `FlexString`). Root paths are in fields named `downloadFolder` or `tvDownloadFolder`.
 
 ### Episode & Episode File
 - `GET /api/v3/episode/{id}` — Episode details including `hasFile` (bool) and `episodeFileId` (int, 0 if no file).
-- `GET /api/v3/episodefile/{id}` — Episode file details including quality name, size, season/episode numbers.
+- `GET /api/v3/episodefile/{id}` — Episode file details including quality (served as a quality object; decoded as `QualityName`), `customFormatScore` (int), size, season/episode numbers. `customFormatScore` is the basis of the reconciliation upgrade check (§3.2).
 
 ### Series
 - `GET /api/v3/series/{id}` — Series details (title, path, tvdbId).

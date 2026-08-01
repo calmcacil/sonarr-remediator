@@ -10,12 +10,17 @@ import (
 )
 
 // GetQueue returns the current download queue (GET /api/v3/queue).
+//
+// Sonarr serves the queue as a paged envelope (SPEC §12): one page of up to
+// 1000 items is requested and the records are unwrapped. A queue larger than
+// that is out of scope for a sidecar remediator.
 func (c *Client) GetQueue(ctx context.Context) ([]types.QueueItem, error) {
-	var items []types.QueueItem
-	if err := c.do(ctx, http.MethodGet, "/api/v3/queue", nil, nil, &items); err != nil {
+	q := url.Values{"page": {"1"}, "pageSize": {"1000"}}
+	var page types.Page[types.QueueItem]
+	if err := c.do(ctx, http.MethodGet, "/api/v3/queue", q, nil, &page); err != nil {
 		return nil, err
 	}
-	return items, nil
+	return page.Records, nil
 }
 
 // RemoveQueueItem removes a queue item (DELETE /api/v3/queue/{id}).

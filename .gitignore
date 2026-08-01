@@ -1,0 +1,7 @@
+# Real local configs (never committed; config.example.yaml is the template)
+config.live.yaml
+config.local.yaml
+
+# Build artifacts
+sonarr-remediator
+sonarr-remediator-amd64

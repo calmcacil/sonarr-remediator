@@ -58,8 +58,11 @@ func fullParse() types.ParseResult {
 type mockSonarr struct {
 	mu            sync.Mutex
 	parsePaths    []string
-	manualImports []types.ManualImportRequest
+	importCommands []types.ManualImportCommand
+	previewCalls  []string
+	queueItems    []types.QueueItem
 
+	version     string
 	series      map[int]types.SeriesResource
 	episodes    map[int]types.EpisodeResource
 	episodeFile map[int]types.EpisodeFileResource
@@ -69,12 +72,18 @@ type mockSonarr struct {
 	parseResult        types.ParseResult
 	parseOverrides     map[string]types.ParseResult // exact parse path -> result
 	parseErrSubstrings []string                     // path containing any of these -> 400
-	manualImportStatus int                          // status for POST /api/v3/manualimport
-	failImportEpisodes map[int]bool
+	commandStatus      int                          // status for POST /api/v3/command
+	keepInQueue        bool                         // command does not clear the queue item
+	previewResp        []types.ManualImportFile     // GET /api/v3/manualimport preview
+	failCommandEpisodes map[int]bool
 }
 
 func defaultMock() *mockSonarr {
 	return &mockSonarr{
+		// §3.4 (the recovery pipeline this mock serves) targets the v3 API:
+		// v3 parses path= normally, where v4 answers 204. SetVersion flips
+		// to v4 for tests pinning the v4 behavior (SPEC §12).
+		version: "3.0.0.900",
 		series: map[int]types.SeriesResource{
 			seriesID: {ID: seriesID, Title: "Test Series", TVDBID: tvdbID},
 		},
@@ -87,9 +96,9 @@ func defaultMock() *mockSonarr {
 			{ID: 4, Name: "HDTV-1080p", Title: "HDTV-1080p", Weight: 100},
 			{ID: 5, Name: "Bluray-1080p", Title: "Bluray-1080p", Weight: 200},
 		},
-		languages:          []types.Language{{ID: 1, Name: "English"}},
-		parseResult:        fullParse(),
-		manualImportStatus: http.StatusOK,
+		languages:           []types.Language{{ID: 1, Name: "English"}},
+		parseResult:         fullParse(),
+		commandStatus:       http.StatusOK,
 	}
 }
 
@@ -99,20 +108,32 @@ func (m *mockSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("path")
 		m.mu.Lock()
 		m.parsePaths = append(m.parsePaths, q)
+		version := m.version
 		m.mu.Unlock()
+		if strings.HasPrefix(version, "4") && q != "" {
+			// Live v4 answers 204 No Content to path= parse calls; only
+			// title= parses on v4. v3 parses path= normally (SPEC §12).
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		m.mu.Lock()
 		if o, ok := m.parseOverrides[q]; ok {
+			m.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(o)
 			return
 		}
 		for _, sub := range m.parseErrSubstrings {
 			if strings.Contains(q, sub) {
+				m.mu.Unlock()
 				http.Error(w, "parse failed", http.StatusBadRequest)
 				return
 			}
 		}
+		pr := m.parseResult
+		m.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(m.parseResult)
+		_ = json.NewEncoder(w).Encode(pr)
 	case strings.HasPrefix(p, "/api/v3/series/"):
 		v, ok := m.series[resourceID(p, "/api/v3/series/")]
 		writeResource(w, v, ok)
@@ -122,20 +143,76 @@ func (m *mockSonarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/v3/episodefile/"):
 		v, ok := m.episodeFile[resourceID(p, "/api/v3/episodefile/")]
 		writeResource(w, v, ok)
-	case p == "/api/v3/manualimport":
-		var req types.ManualImportRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	case p == "/api/v3/manualimport" && r.Method == http.MethodGet:
+		dl := r.URL.Query().Get("downloadId")
+		m.mu.Lock()
+		m.previewCalls = append(m.previewCalls, dl)
+		resp := m.previewResp
+		known := false
+		for _, it := range m.queueItems {
+			if it.DownloadID != "" && it.DownloadID == dl {
+				known = true
+				break
+			}
+		}
+		m.mu.Unlock()
+		if dl == "" {
+			// Live throws on the empty downloadId (empty path).
+			http.Error(w, "manual import preview failed", http.StatusInternalServerError)
+			return
+		}
+		if !known {
+			// An unknown downloadId yields an empty preview, not files.
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]types.ManualImportFile{})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	case p == "/api/v3/command" && r.Method == http.MethodPost:
+		var cmd types.ManualImportCommand
+		if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 		m.mu.Lock()
-		m.manualImports = append(m.manualImports, req)
-		status := m.manualImportStatus
-		if m.failImportEpisodes[req.EpisodeID] {
-			status = http.StatusBadRequest
+		m.importCommands = append(m.importCommands, cmd)
+		status := m.commandStatus
+		for _, f := range cmd.Files {
+			for _, ep := range f.EpisodeIDs {
+				if m.failCommandEpisodes[ep] {
+					status = http.StatusBadRequest
+				}
+			}
+		}
+		if !m.keepInQueue && status == http.StatusOK {
+			// A completed manual import removes the tracked download.
+			dl := ""
+			if len(cmd.Files) > 0 {
+				dl = cmd.Files[0].DownloadID
+			}
+			out := m.queueItems[:0]
+			for _, it := range m.queueItems {
+				if it.DownloadID != dl {
+					out = append(out, it)
+				}
+			}
+			m.queueItems = out
 		}
 		m.mu.Unlock()
-		w.WriteHeader(status)
+		if status != http.StatusOK {
+			http.Error(w, "manual import command failed", status)
+			return
+		}
+		// Live answers 201 Created with the command resource.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "ManualImport", "status": "started"})
+	case p == "/api/v3/queue" && r.Method == http.MethodGet:
+		m.mu.Lock()
+		items := m.queueItems
+		m.mu.Unlock()
+		writeResource(w, types.Page[types.QueueItem]{Page: 1, PageSize: len(items), TotalRecords: len(items), Records: items}, true)
 	case p == "/api/v3/qualitydefinition":
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(m.qualityDefs)
@@ -173,11 +250,17 @@ func (m *mockSonarr) client(t *testing.T) *sonarr.Client {
 	return c
 }
 
-func (m *mockSonarr) imports(t *testing.T) []types.ManualImportRequest {
+func (m *mockSonarr) setVersion(v string) {
+	m.mu.Lock()
+	m.version = v
+	m.mu.Unlock()
+}
+
+func (m *mockSonarr) commands(t *testing.T) []types.ManualImportCommand {
 	t.Helper()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return slices.Clone(m.manualImports)
+	return slices.Clone(m.importCommands)
 }
 
 func (m *mockSonarr) parseCalls(t *testing.T) []string {
@@ -236,7 +319,7 @@ func TestRecoverTVDBMismatchSkipsCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	if got := len(m.imports(t)); got != 0 {
+	if got := len(m.commands(t)); got != 0 {
 		t.Fatalf("manual imports = %d, want 0", got)
 	}
 	if got := len(m.parseCalls(t)); got != 1 {
@@ -263,29 +346,33 @@ func TestRecoverFullMatchImports(t *testing.T) {
 		t.Fatalf("Recover: %v", err)
 	}
 
-	got := m.imports(t)
+	got := m.commands(t)
 	if len(got) != 1 {
 		t.Fatalf("manual imports = %d, want 1", len(got))
 	}
-	req := got[0]
+	cmd := got[0]
+	if cmd.Name != "ManualImport" || cmd.ImportMode != "auto" {
+		t.Errorf("command name/importMode = %q/%q, want ManualImport/auto", cmd.Name, cmd.ImportMode)
+	}
+	if len(cmd.Files) != 1 {
+		t.Fatalf("command files = %d, want 1", len(cmd.Files))
+	}
+	f := cmd.Files[0]
 	wantPath := filepath.Join(dir, "Show.S01E03.1080p.WEB-DL.mkv")
-	if req.Path != wantPath {
-		t.Errorf("import path = %q, want %q", req.Path, wantPath)
+	if f.Path != wantPath {
+		t.Errorf("import path = %q, want %q", f.Path, wantPath)
 	}
-	if req.EpisodeID != episodeID {
-		t.Errorf("episodeId = %d, want %d", req.EpisodeID, episodeID)
+	if len(f.EpisodeIDs) != 1 || f.EpisodeIDs[0] != episodeID {
+		t.Errorf("episodeIds = %v, want [%d]", f.EpisodeIDs, episodeID)
 	}
-	if req.SeriesID != seriesID {
-		t.Errorf("seriesId = %d, want %d", req.SeriesID, seriesID)
+	if f.SeriesID != seriesID {
+		t.Errorf("seriesId = %d, want %d", f.SeriesID, seriesID)
 	}
-	if req.SeasonNumber != 1 {
-		t.Errorf("seasonNumber = %d, want 1", req.SeasonNumber)
+	if f.Quality.Quality.ID != 4 || len(f.Languages) != 1 || f.Languages[0].ID != 1 {
+		t.Errorf("quality/languages = %d/%v, want 4/[English]", f.Quality.Quality.ID, f.Languages)
 	}
-	if req.Quality.Quality.ID != 4 || req.Language.ID != 1 {
-		t.Errorf("quality/language = %d/%d, want 4/1", req.Quality.Quality.ID, req.Language.ID)
-	}
-	if req.DownloadID != downloadID {
-		t.Errorf("downloadId = %q, want %q", req.DownloadID, downloadID)
+	if f.DownloadID != downloadID {
+		t.Errorf("downloadId = %q, want %q", f.DownloadID, downloadID)
 	}
 
 	log := buf.String()
@@ -310,7 +397,7 @@ func TestRecoverPartialConfidenceBelowThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	if got := len(m.imports(t)); got != 0 {
+	if got := len(m.commands(t)); got != 0 {
 		t.Fatalf("manual imports = %d, want 0", got)
 	}
 	log := buf.String()
@@ -338,12 +425,12 @@ func TestRecoverPartialConfidenceImportsWhenThresholdLowered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	got := m.imports(t)
+	got := m.commands(t)
 	if len(got) != 1 {
 		t.Fatalf("manual imports = %d, want 1", len(got))
 	}
-	if got[0].EpisodeID != episodeID {
-		t.Errorf("episodeId = %d, want %d", got[0].EpisodeID, episodeID)
+	if len(got[0].Files[0].EpisodeIDs) != 1 || got[0].Files[0].EpisodeIDs[0] != episodeID {
+		t.Errorf("episodeIds = %v, want [%d]", got[0].Files[0].EpisodeIDs, episodeID)
 	}
 }
 
@@ -360,7 +447,7 @@ func TestRecoverDisabledAutomationSkipsImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	if got := len(m.imports(t)); got != 0 {
+	if got := len(m.commands(t)); got != 0 {
 		t.Fatalf("manual imports = %d, want 0", got)
 	}
 	if !strings.Contains(buf.String(), "auto manual import disabled") {
@@ -399,7 +486,7 @@ func TestRecoverPreImportChecks(t *testing.T) {
 				m.episodes[episodeID] = types.EpisodeResource{ID: episodeID, SeriesID: seriesID, SeasonNumber: 1, EpisodeNumber: 3, Title: "Test Episode", HasFile: false}
 			} else {
 				m.episodes[episodeID] = types.EpisodeResource{ID: episodeID, SeriesID: seriesID, SeasonNumber: 1, EpisodeNumber: 3, Title: "Test Episode", HasFile: true, EpisodeFileID: 55}
-				m.episodeFile[55] = types.EpisodeFileResource{ID: 55, SeriesID: seriesID, SeasonNumber: 1, EpisodeNumber: 3, Quality: tc.existing}
+				m.episodeFile[55] = types.EpisodeFileResource{ID: 55, SeriesID: seriesID, SeasonNumber: 1, EpisodeNumber: 3, Quality: types.QualityName(tc.existing)}
 			}
 			c := m.client(t)
 			if err := c.LoadDefinitions(context.Background()); err != nil {
@@ -413,7 +500,7 @@ func TestRecoverPreImportChecks(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Recover: %v", err)
 			}
-			if got := len(m.imports(t)); got != tc.wantImports {
+			if got := len(m.commands(t)); got != tc.wantImports {
 				t.Fatalf("manual imports = %d, want %d", got, tc.wantImports)
 			}
 			if !strings.Contains(buf.String(), tc.wantLog) {
@@ -448,18 +535,15 @@ func TestRecoverMultiEpisodeImport(t *testing.T) {
 			t.Fatalf("Recover: %v", err)
 		}
 
-		got := m.imports(t)
+		got := m.commands(t)
 		if len(got) != 2 {
 			t.Fatalf("manual imports = %d, want 2", len(got))
 		}
-		if got[0].EpisodeID != episodeID || got[1].EpisodeID != episodeID2 {
-			t.Errorf("episode IDs = [%d %d], want [%d %d]", got[0].EpisodeID, got[1].EpisodeID, episodeID, episodeID2)
+		if got[0].Files[0].EpisodeIDs[0] != episodeID || got[1].Files[0].EpisodeIDs[0] != episodeID2 {
+			t.Errorf("episodeIds = [%v %v], want [[%d] [%d]]", got[0].Files[0].EpisodeIDs, got[1].Files[0].EpisodeIDs, episodeID, episodeID2)
 		}
-		if got[0].Path != got[1].Path {
-			t.Errorf("paths differ: %q vs %q", got[0].Path, got[1].Path)
-		}
-		if got[0].SeasonNumber != 1 || got[1].SeasonNumber != 1 {
-			t.Errorf("seasonNumbers = [%d %d], want [1 1]", got[0].SeasonNumber, got[1].SeasonNumber)
+		if got[0].Files[0].Path != got[1].Files[0].Path {
+			t.Errorf("paths differ: %q vs %q", got[0].Files[0].Path, got[1].Files[0].Path)
 		}
 		if !strings.Contains(buf.String(), "auto-imported") {
 			t.Fatalf("log missing auto-import message:\n%s", buf.String())
@@ -484,8 +568,8 @@ func TestRecoverMultiEpisodeImport(t *testing.T) {
 			t.Fatalf("Recover: %v", err)
 		}
 
-		got := m.imports(t)
-		if len(got) != 1 || got[0].EpisodeID != episodeID {
+		got := m.commands(t)
+		if len(got) != 1 || len(got[0].Files[0].EpisodeIDs) != 1 || got[0].Files[0].EpisodeIDs[0] != episodeID {
 			t.Fatalf("manual imports = %+v, want exactly episode %d", got, episodeID)
 		}
 		if !strings.Contains(buf.String(), "existing file quality is equal or better") {
@@ -509,7 +593,7 @@ func TestRecoverParseFailureSkipsCandidate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Recover: %v", err)
 		}
-		if got := len(m.imports(t)); got != 0 {
+		if got := len(m.commands(t)); got != 0 {
 			t.Fatalf("manual imports = %d, want 0", got)
 		}
 		if got := len(m.parseCalls(t)); got != 2 {
@@ -530,7 +614,7 @@ func TestRecoverParseFailureSkipsCandidate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Recover: %v", err)
 		}
-		if got := len(m.imports(t)); got != 1 {
+		if got := len(m.commands(t)); got != 1 {
 			t.Fatalf("manual imports = %d, want 1", got)
 		}
 		if got := len(m.parseCalls(t)); got != 2 {
@@ -567,12 +651,12 @@ func TestRecoverPathTranslation(t *testing.T) {
 	}
 
 	wantSonarrPath := filepath.Join(sonarrViewDir, "Show.S01E03.1080p.WEB-DL.mkv")
-	got := m.imports(t)
+	got := m.commands(t)
 	if len(got) != 1 {
 		t.Fatalf("manual imports = %d, want 1", len(got))
 	}
-	if got[0].Path != wantSonarrPath {
-		t.Errorf("import path = %q, want sonarr view %q", got[0].Path, wantSonarrPath)
+	if got[0].Files[0].Path != wantSonarrPath {
+		t.Errorf("import path = %q, want sonarr view %q", got[0].Files[0].Path, wantSonarrPath)
 	}
 	parseCalls := m.parseCalls(t)
 	if len(parseCalls) != 1 {
@@ -613,12 +697,12 @@ func TestRecoverPicksHighestConfidenceCandidate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Recover: %v", err)
 		}
-		got := m.imports(t)
+		got := m.commands(t)
 		if len(got) != 1 {
 			t.Fatalf("manual imports = %d, want 1", len(got))
 		}
-		if got[0].Path != fileB {
-			t.Errorf("import path = %q, want higher-confidence candidate %q", got[0].Path, fileB)
+		if got[0].Files[0].Path != fileB {
+			t.Errorf("import path = %q, want higher-confidence candidate %q", got[0].Files[0].Path, fileB)
 		}
 	})
 
@@ -636,12 +720,12 @@ func TestRecoverPicksHighestConfidenceCandidate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Recover: %v", err)
 		}
-		got := m.imports(t)
+		got := m.commands(t)
 		if len(got) != 1 {
 			t.Fatalf("manual imports = %d, want 1", len(got))
 		}
-		if got[0].Path != fileA {
-			t.Errorf("import path = %q, want first (sorted) candidate %q", got[0].Path, fileA)
+		if got[0].Files[0].Path != fileA {
+			t.Errorf("import path = %q, want first (sorted) candidate %q", got[0].Files[0].Path, fileA)
 		}
 	})
 }
@@ -656,7 +740,7 @@ func TestRecoverNoCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	if got := len(m.imports(t)); got != 0 {
+	if got := len(m.commands(t)); got != 0 {
 		t.Fatalf("manual imports = %d, want 0", got)
 	}
 	if got := len(m.parseCalls(t)); got != 0 {
@@ -676,7 +760,7 @@ func TestRecoverEmptyOutputPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
-	if got := len(m.imports(t)); got != 0 {
+	if got := len(m.commands(t)); got != 0 {
 		t.Fatalf("manual imports = %d, want 0", got)
 	}
 	if got := len(m.parseCalls(t)); got != 0 {
@@ -736,7 +820,7 @@ func TestRecoverAllImportsFail(t *testing.T) {
 		{ID: episodeID, EpisodeNumber: 3, SeasonNumber: 1, Title: "Test Episode"},
 		{ID: episodeID2, EpisodeNumber: 4, SeasonNumber: 1, Title: "Test Episode 2"},
 	}
-	m.manualImportStatus = http.StatusBadRequest
+	m.commandStatus = http.StatusBadRequest
 
 	item := queueItem()
 	item.OutputPath = dirWithVideo(t, "Show.S01E03E04.mkv")
@@ -744,7 +828,7 @@ func TestRecoverAllImportsFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("Recover returned nil, want error when all imports fail")
 	}
-	if got := len(m.imports(t)); got != 2 {
+	if got := len(m.commands(t)); got != 2 {
 		t.Fatalf("manual import attempts = %d, want 2", got)
 	}
 	if !strings.Contains(buf.String(), "manual import failed") {
@@ -761,7 +845,7 @@ func TestRecoverPartialImportFailure(t *testing.T) {
 		{ID: episodeID, EpisodeNumber: 3, SeasonNumber: 1, Title: "Test Episode"},
 		{ID: episodeID2, EpisodeNumber: 4, SeasonNumber: 1, Title: "Test Episode 2"},
 	}
-	m.failImportEpisodes = map[int]bool{episodeID2: true}
+	m.failCommandEpisodes = map[int]bool{episodeID2: true}
 
 	item := queueItem()
 	item.OutputPath = dirWithVideo(t, "Show.S01E03E04.mkv")
@@ -769,12 +853,12 @@ func TestRecoverPartialImportFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recover returned %v, want nil on partial success", err)
 	}
-	got := m.imports(t)
+	got := m.commands(t)
 	if len(got) != 2 {
 		t.Fatalf("manual import attempts = %d, want 2", len(got))
 	}
-	if got[0].EpisodeID != episodeID || got[1].EpisodeID != episodeID2 {
-		t.Errorf("episode IDs = [%d %d]", got[0].EpisodeID, got[1].EpisodeID)
+	if len(got[0].Files[0].EpisodeIDs) != 1 || got[0].Files[0].EpisodeIDs[0] != episodeID || len(got[1].Files[0].EpisodeIDs) != 1 || got[1].Files[0].EpisodeIDs[0] != episodeID2 {
+		t.Errorf("episodeIds = [%v %v]", got[0].Files[0].EpisodeIDs, got[1].Files[0].EpisodeIDs)
 	}
 	if !strings.Contains(buf.String(), "manual import failed") {
 		t.Fatalf("log missing failure message:\n%s", buf.String())
@@ -1037,30 +1121,33 @@ func TestImportEpisodes(t *testing.T) {
 		m := defaultMock()
 		m.episodes[episodeID2] = types.EpisodeResource{ID: episodeID2, SeriesID: seriesID, SeasonNumber: 1, EpisodeNumber: 4, HasFile: false}
 		var buf bytes.Buffer
-		if err := importEpisodes(ctx, m.client(t), item, mkCand(episodeID, episodeID2), testLogger(&buf)); err != nil {
+		if _, err := importEpisodes(ctx, m.client(t), item, mkCand(episodeID, episodeID2), false, testLogger(&buf)); err != nil {
 			t.Fatalf("importEpisodes: %v", err)
 		}
-		got := m.imports(t)
+		got := m.commands(t)
 		if len(got) != 2 {
 			t.Fatalf("imports = %d, want 2", len(got))
 		}
-		if got[0].EpisodeID != episodeID || got[1].EpisodeID != episodeID2 {
-			t.Errorf("episode IDs = [%d %d]", got[0].EpisodeID, got[1].EpisodeID)
+		if len(got[0].Files[0].EpisodeIDs) != 1 || got[0].Files[0].EpisodeIDs[0] != episodeID {
+			t.Errorf("request 1 episodeIds = %v, want [%d]", got[0].Files[0].EpisodeIDs, episodeID)
 		}
-		if got[0].Path != "/sonarr/Show.S01E03.mkv" || got[0].SeriesID != seriesID || got[0].DownloadID != downloadID {
-			t.Errorf("request fields wrong: %+v", got[0])
+		if len(got[1].Files[0].EpisodeIDs) != 1 || got[1].Files[0].EpisodeIDs[0] != episodeID2 {
+			t.Errorf("request 2 episodeIds = %v, want [%d]", got[1].Files[0].EpisodeIDs, episodeID2)
+		}
+		if got[0].Files[0].Path != "/sonarr/Show.S01E03.mkv" || got[0].Files[0].SeriesID != seriesID || got[0].Files[0].DownloadID != downloadID {
+			t.Errorf("request fields wrong: %+v", got[0].Files[0])
 		}
 	})
 
 	t.Run("all imports fail returns last error", func(t *testing.T) {
 		m := defaultMock()
 		m.episodes[episodeID2] = types.EpisodeResource{ID: episodeID2, SeriesID: seriesID, SeasonNumber: 1, EpisodeNumber: 4, HasFile: false}
-		m.manualImportStatus = http.StatusBadRequest
+		m.commandStatus = http.StatusBadRequest
 		var buf bytes.Buffer
-		if err := importEpisodes(ctx, m.client(t), item, mkCand(episodeID, episodeID2), testLogger(&buf)); err == nil {
+		if _, err := importEpisodes(ctx, m.client(t), item, mkCand(episodeID, episodeID2), false, testLogger(&buf)); err == nil {
 			t.Fatal("importEpisodes returned nil, want error")
 		}
-		if got := len(m.imports(t)); got != 2 {
+		if got := len(m.commands(t)); got != 2 {
 			t.Fatalf("import attempts = %d, want 2", got)
 		}
 	})
@@ -1068,12 +1155,12 @@ func TestImportEpisodes(t *testing.T) {
 	t.Run("partial failure returns nil", func(t *testing.T) {
 		m := defaultMock()
 		m.episodes[episodeID2] = types.EpisodeResource{ID: episodeID2, SeriesID: seriesID, SeasonNumber: 1, EpisodeNumber: 4, HasFile: false}
-		m.failImportEpisodes = map[int]bool{episodeID2: true}
+		m.failCommandEpisodes = map[int]bool{episodeID2: true}
 		var buf bytes.Buffer
-		if err := importEpisodes(ctx, m.client(t), item, mkCand(episodeID, episodeID2), testLogger(&buf)); err != nil {
+		if _, err := importEpisodes(ctx, m.client(t), item, mkCand(episodeID, episodeID2), false, testLogger(&buf)); err != nil {
 			t.Fatalf("importEpisodes = %v, want nil", err)
 		}
-		if got := len(m.imports(t)); got != 2 {
+		if got := len(m.commands(t)); got != 2 {
 			t.Fatalf("import attempts = %d, want 2", got)
 		}
 		if !strings.Contains(buf.String(), "manual import failed") {
@@ -1090,11 +1177,34 @@ func TestImportEpisodes(t *testing.T) {
 			t.Fatalf("LoadDefinitions: %v", err)
 		}
 		var buf bytes.Buffer
-		if err := importEpisodes(ctx, c, item, mkCand(episodeID), testLogger(&buf)); err != nil {
+		if _, err := importEpisodes(ctx, c, item, mkCand(episodeID), false, testLogger(&buf)); err != nil {
 			t.Fatalf("importEpisodes: %v", err)
 		}
-		if got := len(m.imports(t)); got != 0 {
+		if got := len(m.commands(t)); got != 0 {
 			t.Fatalf("imports = %d, want 0", got)
+		}
+	})
+
+	t.Run("force bypasses equal-quality rejection", func(t *testing.T) {
+		m := defaultMock()
+		m.episodes[episodeID] = types.EpisodeResource{ID: episodeID, HasFile: true, EpisodeFileID: 55}
+		m.episodeFile[55] = types.EpisodeFileResource{ID: 55, Quality: "Bluray-1080p"}
+		c := m.client(t)
+		if err := c.LoadDefinitions(ctx); err != nil {
+			t.Fatalf("LoadDefinitions: %v", err)
+		}
+		var buf bytes.Buffer
+		// Reconciliation (force=true) imports even though the existing file has
+		// equal quality: the score-based upgrade decision already approved it.
+		imported, err := importEpisodes(ctx, c, item, mkCand(episodeID), true, testLogger(&buf))
+		if err != nil {
+			t.Fatalf("importEpisodes(force=true): %v", err)
+		}
+		if !imported {
+			t.Fatal("importEpisodes(force=true) reported no import")
+		}
+		if got := len(m.commands(t)); got != 1 {
+			t.Fatalf("imports = %d, want 1", got)
 		}
 	})
 }
@@ -1242,5 +1352,263 @@ func TestCandidateDirs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ─── ReconcileImport (SPEC §3.2): Sonarr-side matching ────────────────
+
+// reconcileFile builds a preview file matched to the queue item's episode.
+func reconcileFile() types.ManualImportFile {
+	season := 1
+	return types.ManualImportFile{
+		Path:         "/downloads/Test.Series.S01E03.mkv",
+		Name:         "Test.Series.S01E03.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 5, Name: "Bluray-1080p"}},
+		Languages:    []types.LanguageModel{{ID: 1, Name: "English"}},
+		SeasonNumber: &season,
+		Episodes:     []types.EpisodeLookup{{ID: episodeID, EpisodeNumber: 3, SeasonNumber: 1}},
+	}
+}
+
+// shortImportPoll shrinks the queue-clear poll so the tests do not wait on
+// the production 60s timeout.
+func shortImportPoll(t *testing.T) {
+	t.Helper()
+	oldTimeout, oldInterval := importPollTimeout, importPollInterval
+	importPollTimeout, importPollInterval = 300*time.Millisecond, 25*time.Millisecond
+	t.Cleanup(func() {
+		importPollTimeout, importPollInterval = oldTimeout, oldInterval
+	})
+}
+
+func TestReconcileImportImportsMatchedFile(t *testing.T) {
+	ctx := context.Background()
+	m := defaultMock()
+	season := 1
+	m.previewResp = []types.ManualImportFile{
+		{Path: "/downloads/Other.S01E03.mkv", Name: "Other.S01E03.mkv", SeasonNumber: &season, Episodes: []types.EpisodeLookup{{ID: 999, EpisodeNumber: 3, SeasonNumber: 1}}},
+		reconcileFile(),
+	}
+	item := queueItem()
+	m.queueItems = []types.QueueItem{item}
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), item, testLogger(&buf))
+	if err != nil {
+		t.Fatalf("ReconcileImport: %v", err)
+	}
+	if !imported {
+		t.Fatal("imported = false, want true")
+	}
+	got := m.commands(t)
+	if len(got) != 1 {
+		t.Fatalf("manual imports = %d, want 1", len(got))
+	}
+	cmd := got[0]
+	if cmd.Name != "ManualImport" || cmd.ImportMode != "auto" {
+		t.Errorf("command name/importMode = %q/%q, want ManualImport/auto", cmd.Name, cmd.ImportMode)
+	}
+	if len(cmd.Files) != 1 {
+		t.Fatalf("command files = %d, want 1", len(cmd.Files))
+	}
+	f := cmd.Files[0]
+	want := reconcileFile()
+	if f.Path != want.Path {
+		t.Errorf("path = %q, want the previewed matched file %q", f.Path, want.Path)
+	}
+	if !slices.Equal(f.EpisodeIDs, []int{episodeID}) {
+		t.Errorf("episodeIds = %v, want [%d] from the preview match", f.EpisodeIDs, episodeID)
+	}
+	if len(f.Languages) != 1 || f.Languages[0].ID != 1 {
+		t.Errorf("languages = %v, want the preview languages", f.Languages)
+	}
+	if f.Quality.Quality.ID != 5 {
+		t.Errorf("quality = %+v, want the preview quality", f.Quality)
+	}
+	if f.DownloadID != downloadID {
+		t.Errorf("downloadId = %q, want %q", f.DownloadID, downloadID)
+	}
+	if f.SeriesID != seriesID {
+		t.Errorf("seriesId = %d, want %d", f.SeriesID, seriesID)
+	}
+	if !strings.Contains(buf.String(), "auto-imported") {
+		t.Fatalf("log missing auto-import message:\n%s", buf.String())
+	}
+}
+
+func TestReconcileImportNoPreviewFiles(t *testing.T) {
+	ctx := context.Background()
+	m := defaultMock() // preview empty
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), queueItem(), testLogger(&buf))
+	if err != nil || imported {
+		t.Fatalf("imported = %v, err = %v; want false, nil", imported, err)
+	}
+	if n := len(m.commands(t)); n != 0 {
+		t.Fatalf("manual imports = %d, want 0", n)
+	}
+	if !strings.Contains(buf.String(), "no importable file") {
+		t.Fatalf("log missing skip message:\n%s", buf.String())
+	}
+}
+
+func TestReconcileImportSingleFileWithoutEpisodeMatch(t *testing.T) {
+	// One file with no matched episodes: still imported, anchored on the
+	// queue item's episode ID (the tracked download guarantees the mapping).
+	ctx := context.Background()
+	m := defaultMock()
+	m.previewResp = []types.ManualImportFile{
+		{Path: "/downloads/Ambiguous.S01E03.mkv", Name: "Ambiguous.S01E03.mkv"},
+	}
+	item := queueItem()
+	m.queueItems = []types.QueueItem{item}
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), item, testLogger(&buf))
+	if err != nil {
+		t.Fatalf("ReconcileImport: %v", err)
+	}
+	if !imported {
+		t.Fatal("imported = false, want true")
+	}
+	got := m.commands(t)
+	if len(got) != 1 {
+		t.Fatalf("manual imports = %d, want 1", len(got))
+	}
+	if !slices.Equal(got[0].Files[0].EpisodeIDs, []int{episodeID}) {
+		t.Errorf("episodeIds = %v, want queue item fallback [%d]", got[0].Files[0].EpisodeIDs, episodeID)
+	}
+}
+
+func TestReconcileImportAmbiguousFolderSkipped(t *testing.T) {
+	// Multiple files, none matched to the episode: ambiguous, skip.
+	ctx := context.Background()
+	m := defaultMock()
+	season := 1
+	m.previewResp = []types.ManualImportFile{
+		{Path: "/downloads/A.mkv", SeasonNumber: &season},
+		{Path: "/downloads/B.mkv", SeasonNumber: &season},
+	}
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), queueItem(), testLogger(&buf))
+	if err != nil || imported {
+		t.Fatalf("imported = %v, err = %v; want false, nil", imported, err)
+	}
+	if n := len(m.commands(t)); n != 0 {
+		t.Fatalf("manual imports = %d, want 0", n)
+	}
+}
+
+func TestReconcileImportCommandFailure(t *testing.T) {
+	// The import command is rejected by Sonarr: no import, error surfaced.
+	ctx := context.Background()
+	m := defaultMock()
+	m.previewResp = []types.ManualImportFile{reconcileFile()}
+	m.commandStatus = http.StatusBadRequest
+	m.queueItems = []types.QueueItem{queueItem()}
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), queueItem(), testLogger(&buf))
+	if err == nil {
+		t.Fatal("ReconcileImport returned nil, want error when the command fails")
+	}
+	if imported {
+		t.Fatal("imported = true, want false on command failure")
+	}
+	if !strings.Contains(buf.String(), "manual import command failed") {
+		t.Fatalf("log missing failure message:\n%s", buf.String())
+	}
+}
+
+func TestReconcileImportItemNotCleared(t *testing.T) {
+	// The command succeeds but the queue item survives the poll window (the
+	// import failed server-side after the command was accepted): the poll
+	// must not report an import that never committed.
+	shortImportPoll(t)
+	ctx := context.Background()
+	m := defaultMock()
+	m.previewResp = []types.ManualImportFile{reconcileFile()}
+	m.queueItems = []types.QueueItem{queueItem()}
+	m.keepInQueue = true
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), queueItem(), testLogger(&buf))
+	if err != nil {
+		t.Fatalf("ReconcileImport: %v", err)
+	}
+	if imported {
+		t.Fatal("imported = true, want false when the queue item survives the poll window")
+	}
+	if n := len(m.commands(t)); n != 1 {
+		t.Fatalf("manual imports = %d, want 1", n)
+	}
+	if !strings.Contains(buf.String(), "did not clear the queue item") {
+		t.Fatalf("log missing poll-outcome message:\n%s", buf.String())
+	}
+}
+
+// TestReconcileImportUnknownDownloadID: a downloadId the mock has never seen
+// yields an empty preview (200 []), exactly like live — honest skip, no
+// import, no error.
+func TestReconcileImportUnknownDownloadID(t *testing.T) {
+	ctx := context.Background()
+	m := defaultMock()
+	m.previewResp = []types.ManualImportFile{reconcileFile()} // never served: downloadId unregistered
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), queueItem(), testLogger(&buf))
+	if err != nil || imported {
+		t.Fatalf("imported = %v, err = %v; want false, nil", imported, err)
+	}
+	if n := len(m.commands(t)); n != 0 {
+		t.Fatalf("manual imports = %d, want 0", n)
+	}
+	if !strings.Contains(buf.String(), "no importable file") {
+		t.Fatalf("log missing skip message:\n%s", buf.String())
+	}
+}
+
+// TestReconcileImportEmptyDownloadID: live 500s on an empty downloadId
+// (empty path) — the error must surface, never a skip or phantom import.
+func TestReconcileImportEmptyDownloadID(t *testing.T) {
+	ctx := context.Background()
+	m := defaultMock()
+	m.previewResp = []types.ManualImportFile{reconcileFile()}
+	item := queueItem()
+	item.DownloadID = ""
+
+	var buf bytes.Buffer
+	imported, err := ReconcileImport(ctx, m.client(t), item, testLogger(&buf))
+	if err == nil {
+		t.Fatal("ReconcileImport returned nil, want error for an empty downloadId (live 500s)")
+	}
+	if imported {
+		t.Fatal("imported = true, want false on preview error")
+	}
+	if n := len(m.commands(t)); n != 0 {
+		t.Fatalf("manual imports = %d, want 0", n)
+	}
+}
+
+// TestRecoverV4ParsePath204NoCandidates: live v4 answers 204 No Content to
+// path= parse calls, so the parse-based §3.4 pipeline must not fabricate
+// candidates or imports against a v4 server (it is v3-targeted; SPEC §12).
+func TestRecoverV4ParsePath204NoCandidates(t *testing.T) {
+	m := defaultMock()
+	m.setVersion("4.0.0.741")
+	item := queueItem()
+	item.OutputPath = dirWithVideo(t, "Show.S01E03.mkv")
+
+	err, buf := recoverWith(t, m, newCfg(), sonarr.NewPathTranslator("", ""), nil, item)
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if n := len(m.commands(t)); n != 0 {
+		t.Fatalf("manual imports = %d, want 0 against v4 (parse 204)", n)
+	}
+	if strings.Contains(buf.String(), "auto-imported") {
+		t.Fatalf("Recover claimed an import that could not have happened:\n%s", buf.String())
 	}
 }

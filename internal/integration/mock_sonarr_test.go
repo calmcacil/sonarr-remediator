@@ -23,29 +23,35 @@ type recordedRequest struct {
 }
 
 // MockSonarr is a configurable in-process mock of the Sonarr v4 API
-// (SPEC §12). It serves the endpoints the agent uses — including version
-// detection returning major version 4, so the client uses
-// removeFromClient=true for blocklist deletes — records every request
-// (mutex-guarded), and exposes setters for per-endpoint response data.
-// Every mutating call (POST /api/v3/manualimport, DELETE /api/v3/queue/{id})
-// is recorded with its query string so tests can assert exactly what the
-// agent sent.
+// (SPEC §12). It mirrors the live API contract where it matters: paged
+// envelopes for queue/history, bare arrays for definitions, version-aware
+// parse (v4 answers 204 for path= — see §12), a manualimport preview that
+// requires a known downloadId, the ManualImport command (201 + the tracked
+// download removed on success), an evaluate-only POST /api/v3/manualimport
+// that never imports, and 404s for unknown resources. Every request is
+// recorded (mutex-guarded).
+//
+// Every mutating call (POST /api/v3/command, DELETE /api/v3/queue/{id}) is
+// recorded with its query string so tests can assert exactly what the agent
+// sent.
 type MockSonarr struct {
 	mu       sync.Mutex
 	server   *httptest.Server
 	handlers map[string]http.HandlerFunc // key: "METHOD path" or "METHOD /pattern/{id}"
 
 	// Response data (settable per test).
-	queueRaw      string
-	queue         []types.QueueItem
-	history       []types.HistoryItem
-	qualities     []types.QualityDefinition
-	languages     []types.Language
-	seriesByID    map[int]types.SeriesResource
-	episodeByID   map[int]types.EpisodeResource
-	fileByID      map[int]types.EpisodeFileResource
-	parseResult   *types.ParseResult
+	version      string
+	queueRaw     string
+	queue        []types.QueueItem
+	history      []types.HistoryItem
+	qualities    []types.QualityDefinition
+	languages    []types.Language
+	seriesByID   map[int]types.SeriesResource
+	episodeByID  map[int]types.EpisodeResource
+	fileByID     map[int]types.EpisodeFileResource
+	parseResult  *types.ParseResult
 	parseFailures int // remaining parse calls answered with HTTP 500
+	manualImportPreview []types.ManualImportFile // GET /api/v3/manualimport response
 
 	requests []recordedRequest
 }
@@ -53,6 +59,7 @@ type MockSonarr struct {
 // NewMockSonarr starts a mock Sonarr v4 server. Call Close when done.
 func NewMockSonarr() *MockSonarr {
 	m := &MockSonarr{
+		version:     "4.0.0.741",
 		handlers:    make(map[string]http.HandlerFunc),
 		seriesByID:  make(map[int]types.SeriesResource),
 		episodeByID: make(map[int]types.EpisodeResource),
@@ -84,6 +91,17 @@ func (m *MockSonarr) SetQueue(items ...types.QueueItem) {
 	defer m.mu.Unlock()
 	m.queueRaw = ""
 	m.queue = items
+}
+
+// SetVersion switches the version served by GET /api/v3/system/status.
+// The parse endpoint follows the version like the live API: v4 answers
+// HTTP 204 to path= parse calls, v3 answers 200 (SPEC §12). The default is
+// v4, matching production; tests of v3-only pipelines (failed-import
+// recovery §3.4, import retries §3.6) must SetVersion("3.0.0.900").
+func (m *MockSonarr) SetVersion(v string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.version = v
 }
 
 // SetQueueRaw serves raw JSON for GET /api/v3/queue.
@@ -152,6 +170,13 @@ func (m *MockSonarr) FailParseNext(n int) {
 	m.parseFailures = n
 }
 
+// SetManualImportPreview replaces the GET /api/v3/manualimport response.
+func (m *MockSonarr) SetManualImportPreview(files ...types.ManualImportFile) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.manualImportPreview = files
+}
+
 // Requests returns every observed request, in arrival order.
 func (m *MockSonarr) Requests() []recordedRequest {
 	m.mu.Lock()
@@ -161,7 +186,7 @@ func (m *MockSonarr) Requests() []recordedRequest {
 	return out
 }
 
-// Mutations returns every mutating request (POST /api/v3/manualimport and
+// Mutations returns every mutating request (POST /api/v3/command and
 // DELETE /api/v3/queue/{id}) in arrival order, with query strings.
 func (m *MockSonarr) Mutations() []recordedRequest {
 	var out []recordedRequest
@@ -273,14 +298,18 @@ func (m *MockSonarr) serveDefault(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	switch {
 	case r.Method == http.MethodGet && p == "/api/v3/system/status":
-		writeJSON(w, map[string]string{"version": "4.0.0.741"})
+		m.mu.Lock()
+		v := m.version
+		m.mu.Unlock()
+		writeJSON(w, map[string]string{"version": v})
 	case r.Method == http.MethodGet && p == "/api/v3/queue":
 		m.serveQueue(w)
 	case r.Method == http.MethodGet && p == "/api/v3/history":
 		m.mu.Lock()
 		items := m.history
 		m.mu.Unlock()
-		writeJSON(w, items)
+		// Real Sonarr serves history inside a paged envelope (SPEC §12).
+		writeJSON(w, types.Page[types.HistoryItem]{Page: 1, PageSize: len(items), TotalRecords: len(items), Records: items})
 	case r.Method == http.MethodGet && p == "/api/v3/qualitydefinition":
 		m.mu.Lock()
 		defs := m.qualities
@@ -321,14 +350,92 @@ func (m *MockSonarr) serveDefault(w http.ResponseWriter, r *http.Request) {
 		ep, ok := m.episodeByID[id]
 		m.mu.Unlock()
 		if !ok {
-			ep = types.EpisodeResource{ID: id, HasFile: false}
+			// Live Sonarr answers 404 for an unknown episode; no synthetic
+			// default is invented.
+			http.NotFound(w, r)
+			return
 		}
 		writeJSON(w, ep)
 	case r.Method == http.MethodGet && strings.HasPrefix(p, "/api/v3/parse"):
 		m.serveParse(w, r)
+	case r.Method == http.MethodGet && p == "/api/v3/manualimport":
+		m.serveManualImportPreview(w, r)
 	case r.Method == http.MethodPost && p == "/api/v3/manualimport":
-		writeJSON(w, map[string]any{})
+		// Evaluate-only, exactly like live v4: POST /api/v3/manualimport
+		// (ReprocessItems) returns a verdict with rejections and never
+		// imports. This pins the regression guard — the real import step is
+		// the ManualImport command, and a test that regresses to this
+		// endpoint must observe "verdict, no import, queue unchanged".
+		var reqs []map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&reqs)
+		resp := make([]map[string]any, 0, len(reqs))
+		for _, req := range reqs {
+			path, _ := req["path"].(string)
+			resp = append(resp, map[string]any{
+				"path": path,
+				"rejections": []map[string]any{{
+					"reason": "Not an upgrade for existing episode file(s)",
+					"type":   "permanent",
+				}},
+			})
+		}
+		writeJSON(w, resp)
+	case r.Method == http.MethodPost && p == "/api/v3/command":
+		// A ManualImport command, the UI's actual import step: Sonarr
+		// executes it and removes the tracked download on completion. Live
+		// answers 201 with the command resource; the import itself runs
+		// asynchronously and is proven by the queue item disappearing.
+		var cmd struct {
+			Name  string `json:"name"`
+			Files []struct {
+				DownloadID string `json:"downloadId"`
+			} `json:"files"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&cmd)
+		m.mu.Lock()
+		if cmd.Name == "ManualImport" {
+			out := m.queue[:0]
+			for _, it := range m.queue {
+				keep := len(cmd.Files) > 0 && cmd.Files[0].DownloadID != "" && it.DownloadID == cmd.Files[0].DownloadID
+				if !keep {
+					out = append(out, it)
+				}
+			}
+			m.queue = out
+		}
+		m.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":          1,
+			"name":        cmd.Name,
+			"commandName": "Manual Import",
+			"status":      "started",
+			"trigger":     "manual",
+			"result":      "unknown",
+		})
 	case r.Method == http.MethodDelete && strings.HasPrefix(p, "/api/v3/queue/"):
+		id := atoiOrZero(strings.TrimPrefix(p, "/api/v3/queue/"))
+		m.mu.Lock()
+		known := false
+		out := m.queue[:0]
+		for _, it := range m.queue {
+			if it.ID == id {
+				known = true
+				continue // a successful delete removes the item, like live
+			}
+			out = append(out, it)
+		}
+		m.queue = out
+		m.mu.Unlock()
+		if !known {
+			// Live Sonarr answers 404 {"message": "NotFound"} for an id that
+			// is not in the queue.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "NotFound"})
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	default:
 		http.NotFound(w, r)
@@ -344,7 +451,8 @@ func (m *MockSonarr) serveQueue(w http.ResponseWriter) {
 		io.WriteString(w, raw)
 		return
 	}
-	writeJSON(w, items)
+	// Real Sonarr serves the queue inside a paged envelope (SPEC §12).
+	writeJSON(w, types.Page[types.QueueItem]{Page: 1, PageSize: len(items), TotalRecords: len(items), Records: items})
 }
 
 func (m *MockSonarr) serveParse(w http.ResponseWriter, r *http.Request) {
@@ -354,9 +462,17 @@ func (m *MockSonarr) serveParse(w http.ResponseWriter, r *http.Request) {
 		m.parseFailures--
 	}
 	pr := m.parseResult
+	version := m.version
 	m.mu.Unlock()
 	if fail {
 		http.Error(w, "parse unavailable", http.StatusInternalServerError)
+		return
+	}
+	if strings.HasPrefix(version, "4") && r.URL.Query().Get("path") != "" {
+		// Live v4 answers 204 No Content to path= parse calls — even for
+		// files already in the library (verified against prod). Only
+		// title= parses on v4. v3 parses path= normally.
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if pr == nil {
@@ -364,6 +480,39 @@ func (m *MockSonarr) serveParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, pr)
+}
+
+// serveManualImportPreview mirrors the live GET /api/v3/manualimport:
+// the downloadId must name a tracked download that has files on disk. An
+// empty downloadId is a 500 (live throws on the empty path); a downloadId
+// the mock has never seen returns an empty list; a known one (a queue item
+// carrying that DownloadID) returns the configured preview files.
+func (m *MockSonarr) serveManualImportPreview(w http.ResponseWriter, r *http.Request) {
+	dl := r.URL.Query().Get("downloadId")
+	m.mu.Lock()
+	files := m.manualImportPreview
+	known := false
+	for _, it := range m.queue {
+		if it.DownloadID != "" && it.DownloadID == dl {
+			known = true
+			break
+		}
+	}
+	m.mu.Unlock()
+	if dl == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message":     "The string can't be left empty, null or consist of only whitespaces. (Parameter 'path')",
+			"description": "System.ArgumentException: The string can't be left empty, null or consist of only whitespaces. (Parameter 'path')",
+		})
+		return
+	}
+	if !known {
+		writeJSON(w, []types.ManualImportFile{})
+		return
+	}
+	writeJSON(w, files)
 }
 
 // writeJSON encodes v as the response body with the JSON content type.

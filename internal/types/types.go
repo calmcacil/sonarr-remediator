@@ -2,18 +2,35 @@
 // Shapes follow SPEC §5.3, §5.4 and §6.
 package types
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
+)
 
 // ─── Queue ───────────────────────────────────────────────────────────
+
+// Page is Sonarr's paged-list envelope (GET /api/v3/queue, /api/v3/history):
+// records are nested under "records" rather than served as a bare array.
+type Page[T any] struct {
+	Page         int `json:"page"`
+	PageSize     int `json:"pageSize"`
+	TotalRecords int `json:"totalRecords"`
+	Records      []T `json:"records"`
+}
 
 // QueueItem is one entry in Sonarr's download queue.
 type QueueItem struct {
 	ID                    int             `json:"id"`
 	SeriesID              int             `json:"seriesId"`
 	EpisodeID             int             `json:"episodeId"`
-	SeriesTitle           string          `json:"seriesTitle"`
+	SeriesTitle           string          `json:"seriesTitle"` // not present on Sonarr v4 queue payloads; kept for tests and non-v4 compatibility
 	EpisodeTitle          string          `json:"episodeTitle"`
-	Quality               string          `json:"quality"`
+	Title                 string          `json:"title"` // release title (Sonarr v4)
+	Quality               QualityModel    `json:"quality"`
+	CustomFormats         []CustomFormat  `json:"customFormats"`
+	CustomFormatScore     int             `json:"customFormatScore"`
 	Size                  int64           `json:"size"`
 	Status                string          `json:"status"`                // queued|paused|downloading|completed|warning|failed
 	TrackedDownloadStatus string          `json:"trackedDownloadStatus"` // ok|warning|error
@@ -23,6 +40,21 @@ type QueueItem struct {
 	DownloadID            string          `json:"downloadId"`
 	OutputPath            string          `json:"outputPath"`
 	Added                 time.Time       `json:"added"`
+}
+
+// CustomFormat is a named Sonarr custom format applied to a release.
+type CustomFormat struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// CustomFormatNames returns the names of the release's custom formats.
+func (q QueueItem) CustomFormatNames() []string {
+	out := make([]string, 0, len(q.CustomFormats))
+	for _, cf := range q.CustomFormats {
+		out = append(out, cf.Name)
+	}
+	return out
 }
 
 // StatusMessage is a named list of human-readable status strings on a queue item.
@@ -67,7 +99,7 @@ type HistoryItem struct {
 	EpisodeID   int               `json:"episodeId"`
 	SourceTitle string            `json:"sourceTitle"`
 	EventType   string            `json:"eventType"` // "grabbed"|"downloadFolderImported"|"downloadFailedImport"|"downloadIgnored"|"episodeFileDeleted"
-	Quality     string            `json:"quality"`
+	Quality     QualityModel      `json:"quality"`
 	Date        time.Time         `json:"date"`
 	Data        map[string]string `json:"data"`
 }
@@ -87,16 +119,27 @@ type HistoryParams struct {
 
 // ─── Manual Import ───────────────────────────────────────────────────
 
-// ManualImportRequest is the body for POST /api/v3/manualimport.
-// ImportMode is intentionally not included; Sonarr uses its configured default.
-type ManualImportRequest struct {
-	Path         string        `json:"path"`
-	SeriesID     int           `json:"seriesId"`
-	SeasonNumber int           `json:"seasonNumber"`
-	EpisodeID    int           `json:"episodeId"` // single episode per call; multiple calls for multi-ep files
-	Quality      QualityModel  `json:"quality"`
-	Language     LanguageModel `json:"language"`
-	DownloadID   string        `json:"downloadId"`
+// ManualImportCommand is the POST /api/v3/command body for the ManualImport
+// command — the actual import step of the manual-import flow (SPEC §12).
+// The reprocess POST (/api/v3/manualimport) only evaluates a file and
+// returns a verdict; the command performs the import and completes the
+// tracked download, which removes the queue item.
+type ManualImportCommand struct {
+	Name       string                    `json:"name"`       // "ManualImport"
+	ImportMode string                    `json:"importMode"` // "auto"
+	Files      []ManualImportCommandFile `json:"files"`
+}
+
+// ManualImportCommandFile is one file inside a ManualImportCommand.
+// EpisodeIDs carries the episodes to import for the file; quality and
+// languages come from Sonarr's own manual-import preview.
+type ManualImportCommandFile struct {
+	Path       string          `json:"path"`
+	SeriesID   int             `json:"seriesId"`
+	EpisodeIDs []int           `json:"episodeIds"`
+	Quality    QualityModel    `json:"quality"`
+	Languages  []LanguageModel `json:"languages"`
+	DownloadID string          `json:"downloadId"`
 }
 
 // QualityModel carries a quality choice with its revision.
@@ -134,14 +177,15 @@ type ParseResult struct {
 
 // ParsedEpisodeInfo is the parsed metadata inside a ParseResult.
 type ParsedEpisodeInfo struct {
-	ReleaseTitle           string        `json:"releaseTitle"`
-	SeriesTitle            string        `json:"seriesTitle"`
-	SeasonNumber           int           `json:"seasonNumber"`
-	EpisodeNumbers         []int         `json:"episodeNumbers"`
-	AbsoluteEpisodeNumbers []int         `json:"absoluteEpisodeNumbers"`
-	FullSeason             bool          `json:"fullSeason"`
-	Quality                QualityModel  `json:"quality"`
-	Language               LanguageModel `json:"language"`
+	ReleaseTitle           string          `json:"releaseTitle"`
+	SeriesTitle            string          `json:"seriesTitle"`
+	SeasonNumber           int             `json:"seasonNumber"`
+	EpisodeNumbers         []int           `json:"episodeNumbers"`
+	AbsoluteEpisodeNumbers []int           `json:"absoluteEpisodeNumbers"`
+	FullSeason             bool            `json:"fullSeason"`
+	Quality                QualityModel    `json:"quality"`
+	Language               LanguageModel   `json:"language"` // Sonarr v3 form; v4 serves languages (plural)
+	Languages              []LanguageModel `json:"languages"`
 }
 
 // SeriesInfo is the matched series inside a ParseResult.
@@ -157,6 +201,33 @@ type EpisodeLookup struct {
 	EpisodeNumber int    `json:"episodeNumber"`
 	SeasonNumber  int    `json:"seasonNumber"`
 	Title         string `json:"title"`
+}
+
+// ImportRejection is Sonarr's reason a manual-import file cannot be imported.
+type ImportRejection struct {
+	Reason string `json:"reason"`
+	Type   string `json:"type"` // permanent|temporary
+}
+
+// ManualImportFile is one file in the GET /api/v3/manualimport preview (and
+// also the shape of one processed item in the evaluate-only POST
+// /api/v3/manualimport response). Sonarr performs its own parsing and
+// series/episode matching — anchored by the downloadId (SPEC §12) — and
+// reports the outcome as rejections; the agent selects the file and submits
+// it through the ManualImport command (SPEC §3.2).
+type ManualImportFile struct {
+	ID                int               `json:"id"`
+	Path              string            `json:"path"`
+	RelativePath      string            `json:"relativePath"`
+	Name              string            `json:"name"`
+	Size              int64             `json:"size"`
+	ReleaseGroup      string            `json:"releaseGroup"`
+	Quality           QualityModel      `json:"quality"`
+	Languages         []LanguageModel   `json:"languages"`
+	SeasonNumber      *int              `json:"seasonNumber"`
+	Episodes          []EpisodeLookup   `json:"episodes"`
+	Rejections        []ImportRejection `json:"rejections"`
+	CustomFormatScore int               `json:"customFormatScore"`
 }
 
 // ─── Episode / File ──────────────────────────────────────────────────
@@ -176,14 +247,37 @@ type EpisodeResource struct {
 // Sonarr's response does not include a quality ID; the pre-import check maps
 // the quality name to a QualityDefinition to obtain a weight.
 type EpisodeFileResource struct {
-	ID                  int    `json:"id"`
-	SeriesID            int    `json:"seriesId"`
-	SeasonNumber        int    `json:"seasonNumber"`
-	EpisodeNumber       int    `json:"episodeNumber"`
-	RelativePath        string `json:"relativePath"`
-	Quality             string `json:"quality"`
-	QualityCutoffNotMet bool   `json:"qualityCutoffNotMet"`
-	Size                int64  `json:"size"`
+	ID                  int         `json:"id"`
+	SeriesID            int         `json:"seriesId"`
+	SeasonNumber        int         `json:"seasonNumber"`
+	EpisodeNumber       int         `json:"episodeNumber"`
+	RelativePath        string      `json:"relativePath"`
+	Quality             QualityName `json:"quality"`
+	QualityCutoffNotMet bool        `json:"qualityCutoffNotMet"`
+	CustomFormatScore   int         `json:"customFormatScore"`
+	Size                int64       `json:"size"`
+}
+
+// QualityName accepts either a plain quality name string or Sonarr's quality
+// object ({quality:{name:...},revision:{...}}), normalizing to the name.
+// Episode files are served the object form; the string form is tolerated for
+// older payloads and test fixtures (SPEC §12).
+type QualityName string
+
+// UnmarshalJSON decodes a string verbatim or extracts the name from a
+// quality object.
+func (q *QualityName) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*q = QualityName(s)
+		return nil
+	}
+	var qm QualityModel
+	if err := json.Unmarshal(b, &qm); err == nil {
+		*q = QualityName(qm.Quality.Name)
+		return nil
+	}
+	return fmt.Errorf("cannot unmarshal %s into QualityName", b)
 }
 
 // ─── Series ──────────────────────────────────────────────────────────
@@ -225,8 +319,39 @@ type DownloadClientResource struct {
 // DownloadClientField is a name/value config field of a download client.
 // Root paths live in fields named "downloadFolder" or "tvDownloadFolder".
 type DownloadClientField struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	Name  string     `json:"name"`
+	Value FlexString `json:"value"`
+}
+
+// FlexString accepts string, number, boolean, or null JSON values. Sonarr
+// download client fields are heterogeneous (e.g. a port is a number), while
+// the root-path fields the agent reads are strings; this keeps the common
+// case typed while tolerating the rest (SPEC §12).
+type FlexString string
+
+// UnmarshalJSON accepts strings verbatim and stringifies numbers, booleans,
+// and null (null becomes empty string).
+func (s *FlexString) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*s = ""
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(b, &str); err == nil {
+		*s = FlexString(str)
+		return nil
+	}
+	var num json.Number
+	if err := json.Unmarshal(b, &num); err == nil {
+		*s = FlexString(num.String())
+		return nil
+	}
+	var boolean bool
+	if err := json.Unmarshal(b, &boolean); err == nil {
+		*s = FlexString(strconv.FormatBool(boolean))
+		return nil
+	}
+	return fmt.Errorf("cannot unmarshal %s into FlexString", b)
 }
 
 // ─── System ──────────────────────────────────────────────────────────
@@ -246,6 +371,7 @@ const (
 	ActionRemoveQueue  ActionType = "remove_queue"
 	ActionRetry        ActionType = "retry"
 	ActionManualImport ActionType = "manual_import"
+	ActionReconcile    ActionType = "reconcile"
 )
 
 // IssueType identifies the detector that produced an issue.
@@ -255,6 +381,7 @@ const (
 	IssueStuckDownload   IssueType = "stuck_download"
 	IssueNotCustomFormat IssueType = "not_custom_format_upgrade"
 	IssueImportFailed    IssueType = "import_failed"
+	IssueReconcile       IssueType = "reconcile"
 )
 
 // Severity ranks issues.
@@ -286,6 +413,8 @@ func (i Issue) ActionTypeFor() ActionType {
 		return ActionRemoveQueue
 	case IssueImportFailed:
 		return ActionManualImport
+	case IssueReconcile:
+		return ActionReconcile
 	default:
 		return ActionLogOnly
 	}
@@ -298,6 +427,8 @@ func (t IssueType) Priority() int {
 	case IssueStuckDownload:
 		return 2
 	case IssueNotCustomFormat:
+		return 2
+	case IssueReconcile:
 		return 2
 	case IssueImportFailed:
 		return 4
@@ -323,4 +454,29 @@ type Decision struct {
 	Reason    string        `json:"reason,omitempty"`
 	Timestamp time.Time     `json:"timestamp"`
 	DryRun    bool          `json:"dryRun"`
+}
+
+// DetailsReconcilePlan is the Issue.Details key carrying a ReconcilePlan
+// (SPEC §3.2): the executor reads it to execute the plan's winner import and
+// discard removals.
+const DetailsReconcilePlan = "reconcile_plan"
+
+// ReconcilePlan is the episode-level reconciliation outcome (SPEC §3.2): the
+// winner release to import and every other targeted release of the same
+// episode, marked for discard. Produced by selector.Reconcile from the poll's
+// targeted hits and carried to the executor inside Issue.Details.
+//
+// Invariants: Winner is one of the input releases; every Discard shares the
+// Winner's series:episode pair; a plan with no discards is a single-release
+// episode whose winner still needs the import-or-remove decision.
+type ReconcilePlan struct {
+	SeriesID  int         `json:"seriesId"`
+	EpisodeID int         `json:"episodeId"`
+	Winner    QueueItem   `json:"winner"`
+	Discards  []QueueItem `json:"discards"`
+}
+
+// EpisodeKey returns the stable seriesId:episodeId identifier.
+func (p ReconcilePlan) EpisodeKey() string {
+	return strconv.Itoa(p.SeriesID) + ":" + strconv.Itoa(p.EpisodeID)
 }
