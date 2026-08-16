@@ -234,6 +234,17 @@ func discardLogs(discards []types.QueueItem) []discardLog {
 // non-targeted winners immediately and routes targeted hits through episode
 // reconciliation.
 func (m *QueueMonitor) evaluateItem(ctx context.Context, item types.QueueItem, all []types.QueueItem) *types.Issue {
+	// Items with an approved decision in the last 5 minutes are not
+	// re-evaluated: re-detection is stateless, and re-running the detectors
+	// would only re-log and re-reject the same stuck item every poll (SPEC
+	// §7 constraint 1). The decision itself is authoritative during the
+	// window.
+	if m.engine.RecentDecision(item) {
+		m.logger.Debug("item acted on recently; skipping re-evaluation",
+			"item", item.CompositeKey())
+		return nil
+	}
+
 	// History is fetched on demand: only for eligible items with a real
 	// episode (unknown-series items have episodeId 0 and no history to
 	// consult) and only when at least one detector is registered (SPEC

@@ -42,12 +42,17 @@ type Engine struct {
 	activeRetries map[string]bool      // item composite key -> retry scheduled
 	activeItems   map[string]time.Time // item key + "|" + action -> last approval
 	lastAction    map[string]time.Time // "seriesId:episodeId" -> last action time
+	lastSkipped   map[string]time.Time // item key + "|" + action + "|" + reason -> last info-level skip
 
 	ringMu    sync.Mutex
 	ring      []types.Decision
 	ringStart int
 	ringCount int
 }
+
+// skipLogWindow is how often a repeated identical rejection is logged at info
+// level; in between, quiet repeats log at debug (SPEC §9).
+var skipLogWindow = 5 * time.Minute
 
 // New builds a safety engine. A nil logger is replaced with a default info
 // logger; the logger is always tagged with component=safety (SPEC §9).
@@ -62,6 +67,7 @@ func New(cfg *config.Config, logger *slog.Logger) *Engine {
 		activeRetries: make(map[string]bool),
 		activeItems:   make(map[string]time.Time),
 		lastAction:    make(map[string]time.Time),
+		lastSkipped:   make(map[string]time.Time),
 	}
 }
 
@@ -131,6 +137,24 @@ func (e *Engine) SetRetryActive(key string, active bool) {
 	} else {
 		delete(e.activeRetries, key)
 	}
+}
+
+// RecentDecision reports whether any action was approved for the item's
+// composite key within the duplicate-action window. The queue monitor uses it
+// to skip re-evaluating items that were just acted on, so repeated polls do
+// not re-detect, re-log, and re-reject the same stuck item (SPEC §7
+// constraint 1).
+func (e *Engine) RecentDecision(item types.QueueItem) bool {
+	prefix := item.CompositeKey() + "|"
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	for k, t := range e.activeItems {
+		if strings.HasPrefix(k, prefix) && now.Sub(t) < duplicateWindow {
+			return true
+		}
+	}
+	return false
 }
 
 // Drain returns all buffered decisions in order and clears the buffer. Used
@@ -402,14 +426,19 @@ func firstFailure(checks []types.CheckResult) string {
 }
 
 // logSkipped emits the action.skipped info line with the full decision fields.
+// A rejection that repeats for the same item, action, and reason within
+// skipLogWindow is logged at debug instead — the first line already explains
+// why nothing happens, and stuck items would otherwise spam one full line per
+// poll cycle. Decisions are recorded in the ring buffer regardless, so the
+// shutdown flush keeps the complete record.
 func (e *Engine) logSkipped(dec types.Decision) {
 	item := dec.Issue.QueueItem
 	decisionID := dec.Issue.ID
 	if decisionID == "" {
 		decisionID = "dec_" + item.CompositeKey()
 	}
-	e.logger.Info(
-		fmt.Sprintf("Skipped %s for queue item %d: %s", dec.Action, item.ID, dec.Reason),
+	msg := fmt.Sprintf("Skipped %s for queue item %d: %s", dec.Action, item.ID, dec.Reason)
+	attrs := []any{
 		"event", "action.skipped",
 		"decision_id", decisionID,
 		"item", map[string]any{
@@ -424,7 +453,23 @@ func (e *Engine) logSkipped(dec types.Decision) {
 		"action", string(dec.Action),
 		"reason", dec.Reason,
 		"dry_run", dec.DryRun,
-	)
+	}
+
+	skipKey := itemActionKey(item, dec.Action) + "|" + dec.Reason
+	e.mu.Lock()
+	last, seen := e.lastSkipped[skipKey]
+	now := time.Now()
+	quiet := seen && now.Sub(last) < skipLogWindow
+	if !quiet {
+		e.lastSkipped[skipKey] = now
+	}
+	e.mu.Unlock()
+
+	if quiet {
+		e.logger.Debug(msg, attrs...)
+		return
+	}
+	e.logger.Info(msg, attrs...)
 }
 
 // checksToLog renders checks as maps so the JSON logger emits lowercase keys

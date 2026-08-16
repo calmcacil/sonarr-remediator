@@ -272,6 +272,54 @@ func TestUnknownSeriesCooldownBuckets(t *testing.T) {
 	assertRejected(t, dec, "duplicate.action")
 }
 
+// TestRepeatedRejectionsLoggedOnce: an identical rejection for the same item,
+// action, and reason is logged at info only once per window — the debug
+// repeats are invisible at the default info level (SPEC §9).
+func TestRepeatedRejectionsLoggedOnce(t *testing.T) {
+	e, buf := newEngine(t, nil)
+	e.SetSonarrUp(true)
+
+	item := queueItem(func(q *types.QueueItem) { q.Status = "queued" })
+	iss := issue(types.IssueStuckDownload, item)
+	for range 5 {
+		dec := mustEvaluate(t, e, iss)
+		assertRejected(t, dec, "queue.status")
+	}
+	if n := strings.Count(buf.String(), "action.skipped"); n != 1 {
+		t.Fatalf("action.skipped info lines = %d, want 1 (repeats quieted)", n)
+	}
+
+	// A different rejection reason still gets its own info line.
+	other := issue(types.IssueStuckDownload, queueItem(func(q *types.QueueItem) {
+		q.SeriesID, q.EpisodeID = 999, 998
+		q.Status = "queued"
+	}))
+	mustEvaluate(t, e, other)
+	if n := strings.Count(buf.String(), "action.skipped"); n != 2 {
+		t.Fatalf("action.skipped info lines = %d, want 2 after a distinct rejection", n)
+	}
+}
+
+// TestRecentDecision: an approved decision marks the item as recently acted
+// on within the duplicate window; other items are unaffected.
+func TestRecentDecision(t *testing.T) {
+	e, _ := newEngine(t, nil)
+	e.SetSonarrUp(true)
+
+	item := queueItem(nil)
+	if e.RecentDecision(item) {
+		t.Fatal("RecentDecision = true before any approval")
+	}
+	dec := mustEvaluate(t, e, issue(types.IssueStuckDownload, item))
+	assertApproved(t, dec, types.ActionRemoveQueue)
+	if !e.RecentDecision(item) {
+		t.Fatal("RecentDecision = false after an approval")
+	}
+	if e.RecentDecision(queueItem(func(q *types.QueueItem) { q.DownloadID = "dl-other" })) {
+		t.Fatal("RecentDecision = true for a different item")
+	}
+}
+
 // ─── not_custom_format gates ────────────────────────────────────────────
 
 func TestEvaluateNotCustomFormatGates(t *testing.T) {

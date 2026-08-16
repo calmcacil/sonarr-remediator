@@ -21,8 +21,8 @@ import (
 
 // newMonitor builds a queue monitor over a mock Sonarr serving the history
 // endpoint (the default getHistory queries it) and the registered
-// not-custom-format detector.
-func newMonitor(t *testing.T, history []types.HistoryItem) *QueueMonitor {
+// not-custom-format detector. The engine is returned for state setup.
+func newMonitor(t *testing.T, history []types.HistoryItem) (*QueueMonitor, *safety.Engine) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -44,7 +44,7 @@ func newMonitor(t *testing.T, history []types.HistoryItem) *QueueMonitor {
 	engine := safety.New(cfg, logger)
 	issues := make(chan types.Issue, 10)
 	dets := []detectors.Detector{detectors.NewNotCustomFormatDetector(cfg, logger)}
-	return NewQueueMonitor(client, cfg, engine, issues, dets, logger)
+	return NewQueueMonitor(client, cfg, engine, issues, dets, logger), engine
 }
 
 // ─── same-episode gate (SPEC §3.3) ─────────────────────────────────────
@@ -72,7 +72,7 @@ func activeSibling() types.QueueItem {
 // TestSameEpisodeGateMethodA: a Method A candidate (queue status message) is
 // suppressed while another active queue item for the same episode exists.
 func TestSameEpisodeGateMethodA(t *testing.T) {
-	m := newMonitor(t, nil)
+	m, _ := newMonitor(t, nil)
 	item := queueMsgItem()
 
 	if iss := m.evaluateItem(context.Background(), item, []types.QueueItem{item}); iss == nil {
@@ -102,7 +102,7 @@ func TestSameEpisodeGateMethodB(t *testing.T) {
 		Date:      time.Now().Add(-30 * time.Minute),
 		Data:      map[string]string{"status": "Not an upgrade"},
 	}}
-	m := newMonitor(t, ignored)
+	m, _ := newMonitor(t, ignored)
 	item := queueMsgItem()
 	item.TrackedDownloadStatus = "ok" // no Method A signature; history only
 	item.StatusMessages = nil
@@ -113,5 +113,30 @@ func TestSameEpisodeGateMethodB(t *testing.T) {
 
 	if iss := m.evaluateItem(context.Background(), item, []types.QueueItem{item, activeSibling()}); iss != nil {
 		t.Fatalf("issue = %+v, want nil while another active item exists for the episode", iss)
+	}
+}
+
+// TestRecentDecisionSuppressesReEvaluation: after the engine approves an
+// action for an item, the monitor skips re-evaluating it within the
+// duplicate window — no re-detection, no re-emission, no skip-log spam.
+func TestRecentDecisionSuppressesReEvaluation(t *testing.T) {
+	m, engine := newMonitor(t, nil)
+	item := queueMsgItem()
+	engine.SetSonarrUp(true)
+
+	iss := m.evaluateItem(context.Background(), item, []types.QueueItem{item})
+	if iss == nil {
+		t.Fatal("issue = nil, want detection on the first evaluation")
+	}
+	dec, err := engine.Evaluate(context.Background(), *iss)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if !dec.Approved {
+		t.Fatalf("setup: expected approval, got %q", dec.Reason)
+	}
+
+	if got := m.evaluateItem(context.Background(), item, []types.QueueItem{item}); got != nil {
+		t.Fatalf("issue = %+v, want nil (recently acted on, re-evaluation suppressed)", got)
 	}
 }

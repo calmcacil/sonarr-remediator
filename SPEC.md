@@ -516,7 +516,7 @@ The agent's only output surface. Every action produces exactly one structured lo
 |---|---|---|
 | `action.taken` | `info` | Action executed (dry-run off) |
 | `action.recommended` | `info` | Action approved but dry-run on — "Would have ..." |
-| `action.skipped` | `info` | Action rejected by a safety check, with reason |
+| `action.skipped` | `info` | Action rejected by a safety check, with reason. An identical rejection for the same item, action, and reason is logged at `debug` for 5 minutes after the previous `info` line — stuck items would otherwise spam one full line per poll |
 | `import.failed-all-retries` | `warn` | All retries exhausted; manual intervention required |
 | `error.sonarr-unreachable` | `error` | Sonarr connectivity lost; monitors pause with backoff |
 
@@ -708,11 +708,13 @@ plus all registered detectors over every item, deduplicate by composite key
 selecting the highest-priority issue, and emit the winning issue per item for
 eligible states. Every poll is a full evaluation: detection is stateless per
 item (repeated issues are suppressed by the safety engine's duplicate-action
-and cooldown constraints), so no cross-poll diff state is kept. The
-same-episode gate for not-custom-format removals (SPEC §3.3) is enforced on
-the winning candidate, covering both detection methods. Detectors are
-injected at construction via `NewQueueMonitor(client, cfg, engine, issues,
-detectors, logger)`.
+and cooldown constraints), so no cross-poll diff state is kept. Items with an
+approved decision in the last 5 minutes are not re-evaluated at all (SPEC §7
+constraint 1), so stuck items do not re-log detection and rejection lines
+every poll. The same-episode gate for not-custom-format removals (SPEC §3.3)
+is enforced on the winning candidate, covering both detection methods.
+Detectors are injected at construction via `NewQueueMonitor(client, cfg,
+engine, issues, detectors, logger)`.
 
 ---
 
