@@ -24,13 +24,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
       - name: Filter changed paths
         id: filter
-        uses: dorny/paths-filter@v3.0.3
+        uses: actions/github-script@v7
         with:
-          filters: 'go: [**/*.go]'
+          script: core.setOutput('go', 'true')
   quality:
     name: Quality
     runs-on: ubuntu-latest
