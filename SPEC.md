@@ -399,7 +399,7 @@ Global flag (`dryRun: true`) that disables all mutating API calls.
 - No `POST`/`DELETE` requests are sent to Sonarr.
 - Log entries are tagged `"dry_run": true`.
 
-**Purpose:** Deploy the agent, observe behavior, tune settings, build confidence before enabling automation.
+**Purpose:** Deploy the agent, observe behavior, tune settings, build confidence before enabling automation. A practical runbook for collecting and interpreting the dry-run text logs is in [DRYRUN_VALIDATION.md](DRYRUN_VALIDATION.md).
 
 ---
 
