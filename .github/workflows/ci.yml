@@ -15,8 +15,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.expand.outputs.go }}
+      docker: ${{ steps.expand.outputs.docker }}
+      ci: ${{ steps.expand.outputs.ci }}
+      docs: ${{ steps.expand.outputs.docs }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/filters.yaml
+      - name: Compute effective changes
+        id: expand
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            printf 'go=true\ndocker=true\nci=true\ndocs=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'go=%s\ndocker=%s\nci=%s\ndocs=%s\n' \
+              "${{ steps.filter.outputs.go }}" \
+              "${{ steps.filter.outputs.docker }}" \
+              "${{ steps.filter.outputs.ci }}" \
+              "${{ steps.filter.outputs.docs }}" >> "$GITHUB_OUTPUT"
+          fi
+
   quality:
     name: Quality
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -32,17 +66,22 @@ jobs:
         with:
           python-version: "3.x"
       - name: Check formatting
+        if: needs.changes.outputs.go == 'true'
         run: make format-check
       - name: Check module consistency and vet
+        if: needs.changes.outputs.go == 'true'
         run: make module-check
       - name: Run golangci-lint
+        if: needs.changes.outputs.go == 'true'
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
           args: --timeout=5m
       - name: Validate workflow syntax
+        if: needs.changes.outputs.ci == 'true'
         run: make workflows
       - name: Validate documentation links
+        if: needs.changes.outputs.docs == 'true'
         run: make docs
       - name: Validate conventional PR title
         if: github.event_name == 'pull_request'
@@ -58,6 +97,8 @@ jobs:
 
   tests:
     name: Tests
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -82,6 +123,8 @@ jobs:
 
   builds:
     name: Supported builds
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -108,6 +151,8 @@ jobs:
 
   vulnerabilities:
     name: Vulnerabilities
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -124,7 +169,7 @@ jobs:
   required:
     name: Required
     if: always()
-    needs: [quality, tests, builds, vulnerabilities]
+    needs: [changes, quality, tests, builds, vulnerabilities]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -133,7 +178,7 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           for result in $RESULTS; do
-            if [ "$result" != success ]; then
+            if [ "$result" != success ] && [ "$result" != skipped ]; then
               echo "One or more required jobs did not succeed: $RESULTS"
               exit 1
             fi

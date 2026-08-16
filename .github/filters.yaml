@@ -1,0 +1,16 @@
+# Changed-path filters shared by the CI and Security workflows
+# (dorny/paths-filter v4).
+go:
+  - '**/*.go'
+  - 'go.mod'
+  - 'go.sum'
+  - 'Makefile'
+  - '.golangci.yml'
+docker:
+  - 'Dockerfile'
+  - '.dockerignore'
+ci:
+  - '.github/**'
+docs:
+  - '**/*.md'
+  - 'scripts/check-doc-links.py'

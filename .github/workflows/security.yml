@@ -17,9 +17,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.expand.outputs.go }}
+      docker: ${{ steps.expand.outputs.docker }}
+      ci: ${{ steps.expand.outputs.ci }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/filters.yaml
+      - name: Compute effective changes
+        id: expand
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+            printf 'go=true\ndocker=true\nci=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'go=%s\ndocker=%s\nci=%s\n' \
+              "${{ steps.filter.outputs.go }}" \
+              "${{ steps.filter.outputs.docker }}" \
+              "${{ steps.filter.outputs.ci }}" >> "$GITHUB_OUTPUT"
+          fi
+
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true')
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -32,6 +64,8 @@ jobs:
 
   codeql:
     name: CodeQL (Go)
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -54,6 +88,8 @@ jobs:
 
   container:
     name: Container vulnerabilities
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
