@@ -67,12 +67,12 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true')
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Review dependency changes
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
@@ -82,7 +82,6 @@ jobs:
   codeql:
     name: CodeQL (Go)
     needs: changes
-    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -94,11 +93,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Initialize CodeQL
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true'
         uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: go
           build-mode: autobuild
       - name: Analyze
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true'
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: /language:go
@@ -106,18 +107,19 @@ jobs:
   container:
     name: Container vulnerabilities
     needs: changes
-    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build image for scanning
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.ci == 'true'
         run: |
           docker build --platform=linux/amd64 \
             --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 \
             --build-arg VERSION=security -t sonarr-remediator:security .
       - name: Scan final image
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.ci == 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: sonarr-remediator:security
