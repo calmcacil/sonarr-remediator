@@ -168,8 +168,10 @@ func TestEvaluateStuckDownloadGates(t *testing.T) {
 			wantApproved: true, failAt: ""},
 		{name: "state importing", mutateItem: func(q *types.QueueItem) { q.TrackedDownloadState = "importing" },
 			wantApproved: false, failAt: "queue.trackedDownloadState", wantChecks: 4},
+		{name: "manual import scheduled", mutateItem: func(q *types.QueueItem) { q.DownloadID = "dl-imported" },
+			wantApproved: false, failAt: "manual_import.scheduled", wantChecks: 5},
 		{name: "retry scheduled", mutateItem: func(q *types.QueueItem) { q.DownloadID = "dl-retry" },
-			wantApproved: false, failAt: "retry.scheduled", wantChecks: 5},
+			wantApproved: false, failAt: "retry.scheduled", wantChecks: 6},
 		{name: "all pass status completed", wantApproved: true, failAt: ""},
 		{name: "all pass status warning", mutateItem: func(q *types.QueueItem) { q.Status = "warning" },
 			wantApproved: true, failAt: ""},
@@ -194,6 +196,13 @@ func TestEvaluateStuckDownloadGates(t *testing.T) {
 			// The retry-scheduled case needs the retry registered first.
 			if tc.failAt == "retry.scheduled" {
 				e.SetRetryActive(item.CompositeKey(), true)
+			}
+			// The manual-import case needs a recent approved manual import
+			// for the same item first (SPEC §3.2).
+			if tc.failAt == "manual_import.scheduled" {
+				if setup := mustEvaluate(t, e, issue(types.IssueImportFailed, item)); !setup.Approved {
+					t.Fatal("setup: expected the manual import approval to pass")
+				}
 			}
 
 			dec := mustEvaluate(t, e, issue(types.IssueStuckDownload, item))

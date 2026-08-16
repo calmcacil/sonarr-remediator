@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
@@ -38,8 +37,6 @@ type QueueMonitor struct {
 	// default implementation queries the last 50 history records for the
 	// episode; tests may replace the field.
 	getHistory func(episodeID int) []types.HistoryItem
-	lastSeen   map[string]types.QueueItem // key: seriesId:episodeId:downloadId
-	mu         sync.Mutex                 // guards lastSeen
 	engine     *safety.Engine
 	cfg        *config.Config
 	logger     *slog.Logger
@@ -58,7 +55,6 @@ func NewQueueMonitor(client *sonarr.Client, cfg *config.Config, engine *safety.E
 		interval:  cfg.Monitoring.QueueInterval.Std(),
 		issues:    issues,
 		detectors: detectors,
-		lastSeen:  make(map[string]types.QueueItem),
 		engine:    engine,
 		cfg:       cfg,
 		logger:    logger.With("component", "queue_monitor"),
@@ -79,8 +75,8 @@ func NewQueueMonitor(client *sonarr.Client, cfg *config.Config, engine *safety.E
 }
 
 // Run polls the queue until ctx is cancelled. While Sonarr is unreachable the
-// monitor pauses with exponential backoff; when connectivity returns it clears
-// lastSeen for a full state refresh (SPEC §5.1).
+// monitor pauses with exponential backoff; the next successful poll is a full
+// evaluation of every item (SPEC §5.1).
 func (m *QueueMonitor) Run(ctx context.Context) {
 	m.pollCtx = ctx
 
@@ -113,7 +109,6 @@ func (m *QueueMonitor) Run(ctx context.Context) {
 			if skipping {
 				skipping = false
 				backoff = monitorBackoffStart
-				m.clearLastSeen()
 				m.logger.Info("sonarr reachable; full state refresh")
 			}
 			m.poll(ctx)
@@ -121,19 +116,19 @@ func (m *QueueMonitor) Run(ctx context.Context) {
 	}
 }
 
-// poll fetches the queue, updates the tracked state, and evaluates every
-// item. A fetch error only skips the cycle; connectivity is owned by the
-// health monitor. Non-targeted issues (e.g. import_failed) are emitted
-// immediately; targeted hits (stuck download, not a custom format upgrade)
-// are grouped by episode and emitted as one reconcile issue per plan, with
-// any unmatched hit keeping its per-item issue (SPEC §3.2).
+// poll fetches the queue and evaluates every item. A fetch error only skips
+// the cycle; connectivity is owned by the health monitor. Non-targeted issues
+// (e.g. import_failed) are emitted immediately; targeted hits (stuck
+// download, not a custom format upgrade) are grouped by episode and emitted
+// as one reconcile issue per plan, with any unmatched hit keeping its
+// per-item issue (SPEC §3.2). Every poll is a full evaluation — detection is
+// stateless per item and deduplication lives in the safety engine.
 func (m *QueueMonitor) poll(ctx context.Context) {
 	items, err := m.client.GetQueue(ctx)
 	if err != nil {
 		m.logger.Error("queue fetch failed", "error", err)
 		return
 	}
-	m.updateLastSeen(items)
 	var hits []targetedHit
 	for i := range items {
 		winner := m.evaluateItem(ctx, items[i], items)
@@ -233,23 +228,6 @@ func discardLogs(discards []types.QueueItem) []discardLog {
 	return out
 }
 
-// updateLastSeen snapshots the current queue, dropping items that left it.
-func (m *QueueMonitor) updateLastSeen(items []types.QueueItem) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.lastSeen = make(map[string]types.QueueItem, len(items))
-	for _, it := range items {
-		m.lastSeen[it.CompositeKey()] = it
-	}
-}
-
-// clearLastSeen drops all tracked state so the next poll is a full refresh.
-func (m *QueueMonitor) clearLastSeen() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.lastSeen = make(map[string]types.QueueItem)
-}
-
 // evaluateItem runs the built-in analysis and every detector over one queue
 // item and returns the winning issue (SPEC §3.7), or nil when the item
 // produced no issue. Emission is the caller's responsibility: poll emits
@@ -285,11 +263,33 @@ func (m *QueueMonitor) evaluateItem(ctx context.Context, item types.QueueItem, a
 		if !eligibleStatus(item.Status) && iss.Type != types.IssueStuckDownload {
 			continue
 		}
+		// SPEC §3.3: no other active queue item for the same episode. A
+		// different download for the same series+episode still in flight
+		// (queued, paused, downloading) means a newer release may still
+		// land; hold the removal. Enforced on the winning candidate for
+		// every detection method (queue message and history event).
+		if iss.Type == types.IssueNotCustomFormat && otherQueueItemForEpisode(item, all) {
+			continue
+		}
 		if winner == nil || higherPriority(iss, winner) {
 			winner = iss
 		}
 	}
 	return winner
+}
+
+// otherQueueItemForEpisode reports whether another queue item for the same
+// series+episode is still an in-flight download (SPEC §3.3).
+func otherQueueItemForEpisode(item types.QueueItem, all []types.QueueItem) bool {
+	for _, other := range all {
+		if other.DownloadID == item.DownloadID {
+			continue
+		}
+		if other.SeriesID == item.SeriesID && other.EpisodeID == item.EpisodeID && activeStatus(other.Status) {
+			return true
+		}
+	}
+	return false
 }
 
 // higherPriority reports whether a outranks b: the lower priority int wins
@@ -315,23 +315,12 @@ func (m *QueueMonitor) emit(issue types.Issue) {
 }
 
 // buildIssue runs the built-in queue analysis. It flags "not a custom format
-// upgrade" candidates from queue status messages (SPEC §3.3 Method A) and
-// enforces the same-episode gate: while another queue item for the same
-// episode is still active, the removal is suppressed.
+// upgrade" candidates from queue status messages (SPEC §3.3 Method A). The
+// same-episode gate is enforced centrally on the winning candidate in
+// evaluateItem, covering every detection method.
 func (m *QueueMonitor) buildIssue(item types.QueueItem, all []types.QueueItem) *types.Issue {
 	if !m.isNotCustomFormatCandidate(item) {
 		return nil
-	}
-	// SPEC §3.3: no other active queue item for the same episode. A different
-	// download for the same series+episode still in flight (queued, paused,
-	// downloading) means a newer release may still land; hold the removal.
-	for _, other := range all {
-		if other.DownloadID == item.DownloadID {
-			continue
-		}
-		if other.SeriesID == item.SeriesID && other.EpisodeID == item.EpisodeID && activeStatus(other.Status) {
-			return nil
-		}
 	}
 	return &types.Issue{
 		Type:       types.IssueNotCustomFormat,

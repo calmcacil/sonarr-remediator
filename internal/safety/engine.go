@@ -162,6 +162,7 @@ func (e *Engine) gatesFor(issue types.Issue) []types.CheckResult {
 			{Check: "queue.status", Expected: "completed|warning|failed", Actual: item.Status, Passed: eligibleStatus(item.Status)},
 			e.ageCheck(item, stuckMinAgeHours),
 			{Check: "queue.trackedDownloadState", Expected: "!= importing", Actual: item.TrackedDownloadState, Passed: item.TrackedDownloadState != "importing"},
+			e.manualImportCheck(key),
 			e.retryCheck(key),
 		}
 	case types.IssueNotCustomFormat:
@@ -334,6 +335,31 @@ func (e *Engine) retryCheck(key string) types.CheckResult {
 	e.mu.Unlock()
 	return types.CheckResult{
 		Check: "retry.scheduled", Expected: "false", Actual: strconv.FormatBool(active), Passed: !active,
+	}
+}
+
+// manualImportCheck builds the manual_import.scheduled gate (SPEC §3.2): a
+// manual import approved for this item within the duplicate-action window
+// means the import may still be running — a removal must not race it. The
+// check is explicit in the decision log even though the series:episode
+// cooldown would eventually block the same pair.
+func (e *Engine) manualImportCheck(key string) types.CheckResult {
+	actionKey := key + "|" + string(types.ActionManualImport)
+	e.mu.Lock()
+	last, seen := e.activeItems[actionKey]
+	if seen && time.Since(last) >= duplicateWindow {
+		delete(e.activeItems, actionKey) // stale; prune opportunistically
+		seen = false
+	}
+	e.mu.Unlock()
+	if !seen {
+		return types.CheckResult{
+			Check: "manual_import.scheduled", Expected: "no manual import in last 5m", Actual: "none", Passed: true,
+		}
+	}
+	return types.CheckResult{
+		Check: "manual_import.scheduled", Expected: "no manual import in last 5m",
+		Actual: time.Since(last).Round(time.Second).String() + " ago", Passed: false,
 	}
 }
 

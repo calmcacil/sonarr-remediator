@@ -559,7 +559,7 @@ sonarr-remediator/
 │   │   ├── language.go          # Language definitions (fetched at startup)
 │   │   └── extras.go            # Episode/file/series helpers
 │   ├── monitors/
-│   │   ├── queue_monitor.go     # Queue polling, diffing, issue dedup by priority
+│   │   ├── queue_monitor.go     # Queue polling, issue dedup by priority, same-episode gate
 │   │   └── health_monitor.go    # Sonarr connectivity
 │   ├── detectors/
 │   │   ├── detector.go          # Detector interface, Issue types
@@ -652,11 +652,21 @@ type QueueMonitor struct {
     issues     chan<- Issue
     detectors  []Detector
     getHistory func(episodeID int) []HistoryItem
-    lastSeen   map[string]QueueState  // key: "seriesId:episodeId:downloadId"
+    engine     *safety.Engine
+    cfg        *config.Config
 }
 ```
 
-Each tick: fetch queue via `GetQueue()`, diff against lastSeen using composite keys (`seriesId:episodeId:downloadId`), run the built-in issue analysis plus all registered detectors, deduplicate by composite key selecting the highest-priority issue, and emit the winning issue per item for eligible states. Detectors are injected at construction via `NewQueueMonitor(client, interval, issues, detectors, getHistory)`.
+Each tick: fetch the queue via `GetQueue()`, run the built-in issue analysis
+plus all registered detectors over every item, deduplicate by composite key
+selecting the highest-priority issue, and emit the winning issue per item for
+eligible states. Every poll is a full evaluation: detection is stateless per
+item (repeated issues are suppressed by the safety engine's duplicate-action
+and cooldown constraints), so no cross-poll diff state is kept. The
+same-episode gate for not-custom-format removals (SPEC §3.3) is enforced on
+the winning candidate, covering both detection methods. Detectors are
+injected at construction via `NewQueueMonitor(client, cfg, engine, issues,
+detectors, logger)`.
 
 ---
 
@@ -1012,17 +1022,17 @@ Each automation setting generates the checks that gate its action. All checks wi
 
 **Example** — `automation.removeNotCustomFormat` generates:
 
-| Check | Expected |
-|---|---|
-| `rule.enabled` | `true` |
-| `queue.status` | `completed` |
-| `queue.trackedDownloadState` | `!= importing` |
-| `status_message` | matches `(?i)not.*(custom format|an upgrade)` |
-| `age_hours` | `>= 2` (waitHours) |
-| `retry.scheduled` | `false` |
-| `other_queue_item_for_episode` | `false` |
+| Check | Expected | Where enforced |
+|---|---|---|
+| `rule.enabled` | `true` | engine |
+| `queue.status` | `completed` | engine |
+| `queue.trackedDownloadState` | `!= importing` | engine |
+| `status_message` | matches `(?i)not.*(custom format|an upgrade)` | detector (Method A) |
+| `age_hours` | `>= 2` (waitHours) | engine |
+| `retry.scheduled` | `false` | engine |
+| `other_queue_item_for_episode` | `false` | queue monitor (winning candidate, both methods) |
 
-The check tables in §3.2 and §3.3 enumerate these gates for each feature. The engine records the actual value of every check in the decision log, so dry-run output explains each pass/fail.
+The check tables in §3.2 and §3.3 enumerate these gates for each feature. The engine records the actual value of every check it evaluates in the decision log, so dry-run output explains each pass/fail; checks enforced outside the engine (status-message and same-episode matching) are part of detection and reported in the issue details.
 
 **`automation.reconcile` gates the `reconcile` issue (one per episode plan, §3.2):**
 

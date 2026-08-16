@@ -55,15 +55,18 @@ the source on 2026-08-15.
 
 ### P2 — Polish
 
-- **P2a.** §3.2 "no manual import scheduled for this item" safety check is
-  missing from `gatesFor` (`engine.go:158`).
-- **P2b.** §3.3 Method B detector (`not_custom_format.go:69`) does not check
-  "no other active queue item for same episode" (only the built-in `buildIssue`
-  path does).
-- **P2c.** `lastSeen` in the queue monitor is write-only dead state
-  (`queue_monitor.go:240`); the SPEC §5.2 diff semantics are not implemented.
-- **P2d.** Commit the uncommitted healthcheck/Dockerfile/README/SPEC/DOCKER_SPEC
-  work before any release (last commit `f1bef45` predates it).
+- **P2a. DONE (2026-08-16).** §3.2 "no manual import scheduled for this item"
+  check implemented as the `manual_import.scheduled` engine gate (explicit in
+  the decision log, backed by the same tracking maps as the duplicate/cooldown
+  constraints).
+- **P2b. DONE (2026-08-16).** §3.3 "no other active queue item for same
+  episode" now enforced on the winning candidate in the queue monitor,
+  covering both detection methods (queue message and history event) — it was
+  previously only applied to Method A.
+- **P2c. DONE (2026-08-16).** Dead `lastSeen` diff state removed from the
+  queue monitor; SPEC §5.2 describes the full-evaluation-per-poll model.
+- **P2d. DONE (2026-08-16).** In-flight healthcheck/Dockerfile/README/SPEC/
+  DOCKER_SPEC work committed (`5845e40`).
 
 ## Recommended sequence
 
