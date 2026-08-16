@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/calmcacil/sonarr-remediator/compare/v0.5.0...v0.5.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* route qBittorrent warning items through torrent error removal ([#11](https://github.com/calmcacil/sonarr-remediator/issues/11)) ([1870642](https://github.com/calmcacil/sonarr-remediator/commit/187064289f47e65fa8a8413d2ae41d2314016d8c))
+
 ## [0.5.0](https://github.com/calmcacil/sonarr-remediator/compare/v0.4.0...v0.5.0) (2026-08-16)
 
 
