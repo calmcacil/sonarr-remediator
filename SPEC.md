@@ -92,7 +92,7 @@ Continuously polls and evaluates every item in the Sonarr download queue.
 
 | Endpoint | Purpose | Interval |
 |---|---|---|
-| `/api/v3/queue` | Active and queued downloads | 30 s |
+| `/api/v3/queue` | Active and queued downloads (incl. unknown-series items: the fetch requests `includeUnknownSeriesItems=true`, since Sonarr's default hides items whose series is not in the library — exactly the import-blocked items a remediator must see) | 30 s |
 | `/api/v3/system/status` | Sonarr health, connectivity, and version | 60 s |
 | `/api/v3/history` | Completed/failed import history | On demand, per queue item |
 
@@ -1050,7 +1050,7 @@ upgrade decision), and `discards` (id/release/score list).
 ### Global Constraints (Always Enforced)
 
 1. **No duplicate actions**: Same item, same action, within 5 minutes → skip.
-2. **Cooldown period**: At least 30 minutes between actions on same series/episode pair (key: `seriesId:episodeId`).
+2. **Cooldown period**: At least 30 minutes between actions on same series/episode pair (key: `seriesId:episodeId`). Unknown-series items (both IDs zero) use their download ID as the bucket, so distinct stuck downloads are not serialized on one `0:0` key.
 3. **Sonarr connectivity required**: Last health check must have succeeded.
 4. **Atomicity**: If first step of multi-step action fails, do not proceed.
 5. **Exclusion list**: Any item whose series ID matches `exclusions.seriesIds` or whose root path has a prefix matching any `exclusions.rootPaths` is skipped. Root path matching uses prefix comparison on the item's download path.
@@ -1368,7 +1368,11 @@ parse-based recovery pipeline is removed.
 ### Queue
 - `GET /api/v3/queue` — Paged envelope (`{page, pageSize, totalRecords,
   records}`); the client requests `page=1&pageSize=1000` and unwraps
-  `records`.
+  `records`. The request sets `includeUnknownSeriesItems=true` explicitly:
+  Sonarr's default hides items whose series is not in the library, which are
+  exactly the import-blocked stuck items a remediator must see (verified
+  against prod: series-title-mismatch items carry seriesId/episodeId null,
+  status completed, trackedDownloadStatus warning, state importBlocked).
 - `DELETE /api/v3/queue/{id}` — Remove item. Params: `blocklist=true` (v3)
   or `removeFromClient=true` (v4 fallback, version-detected). A successful
   delete removes the item; an unknown id is HTTP 404 `{"message":

@@ -1199,3 +1199,99 @@ func TestScenarioTorrentErrorDryRun(t *testing.T) {
 		t.Fatalf("message = %q, want torrent-error dry-run phrasing", msg)
 	}
 }
+// unknownSeriesItem is a queue item Sonarr could not map to a library
+// series: seriesId/episodeId are null, the import is blocked with the
+// series-title-mismatch message, and the item is invisible to queue fetches
+// that omit includeUnknownSeriesItems=true (SPEC §3.1). It must still be
+// detected and removed via the per-item stuck-download flow (reconciliation
+// only groups items with a real episode).
+func unknownSeriesItem() types.QueueItem {
+	return types.QueueItem{
+		ID:                    450,
+		Status:                "completed",
+		TrackedDownloadStatus: "warning",
+		TrackedDownloadState:  "importBlocked",
+		Title:                 "61ff8d464c21325c80e797fe0fc8810f9cdf7482",
+		DownloadID:            "4246DFE83622401D381169A6",
+		StatusMessages: []types.StatusMessage{{
+			Title:    "Import",
+			Messages: []string{"Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki"},
+		}},
+	}
+}
+
+func TestScenarioUnknownSeriesStuckRemoval(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+	m.SetQueue(unknownSeriesItem())
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, unknownSeriesItem(), nil)
+	mustApproved(t, dec)
+	if dec.Action != types.ActionRemoveQueue {
+		t.Fatalf("action = %s, want remove_queue", dec.Action)
+	}
+
+	mut := singleMutation(t, m)
+	if mut.Method != http.MethodDelete || mut.Path != "/api/v3/queue/450" {
+		t.Fatalf("expected DELETE /api/v3/queue/450, got %s %s", mut.Method, mut.Path)
+	}
+	if len(logsWithEvent(t, p, "action.taken")) != 1 {
+		t.Fatal("expected exactly 1 action.taken log")
+	}
+}
+
+func TestScenarioUnknownSeriesStuckDryRun(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = true
+	m.SetQueue(unknownSeriesItem())
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, unknownSeriesItem(), nil)
+	mustApproved(t, dec)
+
+	noMutations(t, m)
+	recs := logsWithEvent(t, p, "action.recommended")
+	if len(recs) != 1 {
+		t.Fatalf("action.recommended logs = %d, want 1", len(recs))
+	}
+	msg, _ := recs[0]["msg"].(string)
+	if !strings.Contains(msg, "Would have removed queue item 450") {
+		t.Fatalf("message = %q, want dry-run removal phrasing", msg)
+	}
+}
+
+// TestScenarioUnknownSeriesItemsDoNotReconcile: several unknown-series stuck
+// items share the "0:0" identity; each must keep its own per-item removal
+// rather than being grouped into an episode-reconciliation plan.
+func TestScenarioUnknownSeriesItemsDoNotReconcile(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = true
+
+	a := unknownSeriesItem()
+	b := unknownSeriesItem()
+	b.ID, b.DownloadID = 451, "8ABE65CFD7E74326F8F8C7FB"
+	c := unknownSeriesItem()
+	c.ID, c.DownloadID = 452, "3525048AECA045B6A5B39B73"
+	m.SetQueue(a, b, c)
+
+	p := newPipeline(t, m, cfg)
+	for _, item := range []types.QueueItem{a, b, c} {
+		dec := mustProcess(t, p, item, nil)
+		mustApproved(t, dec)
+	}
+
+	recs := logsWithEvent(t, p, "action.recommended")
+	if len(recs) != 3 {
+		t.Fatalf("action.recommended logs = %d, want 3 (one per item, no cooldown serialization)", len(recs))
+	}
+	if len(logsWithEvent(t, p, "reconcile.plan")) != 0 {
+		t.Fatal("unknown-series items must not produce episode reconciliation plans")
+	}
+}

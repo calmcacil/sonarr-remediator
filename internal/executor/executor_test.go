@@ -1099,6 +1099,22 @@ func TestExecuteRemoveTorrentErrorDeleteFailure(t *testing.T) {
 	}
 }
 
+// TestExecuteGetQueueIncludesUnknownSeries: the queue fetch must request
+// unknown-series items explicitly — Sonarr's default hides them and they are
+// exactly the stuck items a remediator must see (series title mismatch /
+// import-blocked before any series match).
+func TestExecuteGetQueueIncludesUnknownSeries(t *testing.T) {
+	m := newMockSonarr(t)
+	client := m.client(t)
+	if _, err := client.GetQueue(context.Background()); err != nil {
+		t.Fatalf("GetQueue: %v", err)
+	}
+	uris := m.requestURIs()
+	if len(uris) != 1 || !strings.Contains(uris[0], "includeUnknownSeriesItems=true") {
+		t.Fatalf("queue fetch = %v, want includeUnknownSeriesItems=true", uris)
+	}
+}
+
 // ─── decision helpers ──────────────────────────────────────────────────
 
 // TestDecisionIDFormatAndUniqueness verifies the decision ID contract: each

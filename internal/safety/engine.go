@@ -456,7 +456,13 @@ func itemActionKey(item types.QueueItem, action types.ActionType) string {
 }
 
 // cooldownKey is the series:episode pair key used for the cooldown constraint.
+// Unknown-series items (seriesId and episodeId both 0) share no meaningful
+// pair, so their download ID becomes the bucket: otherwise every such item
+// would serialize on the same "0:0" cooldown.
 func cooldownKey(item types.QueueItem) string {
+	if item.SeriesID == 0 && item.EpisodeID == 0 && item.DownloadID != "" {
+		return "dl:" + item.DownloadID
+	}
 	return strconv.Itoa(item.SeriesID) + ":" + strconv.Itoa(item.EpisodeID)
 }
 

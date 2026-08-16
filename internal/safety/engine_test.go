@@ -245,6 +245,33 @@ func TestStuckAgeCheckActualValues(t *testing.T) {
 	}
 }
 
+func TestUnknownSeriesCooldownBuckets(t *testing.T) {
+	e, _ := newEngine(t, nil)
+	e.SetSonarrUp(true)
+
+	// Two unknown-series items (seriesId/episodeId 0) with different
+	// download IDs must not share the "0:0" cooldown bucket: each gets its
+	// own removal immediately.
+	mk := func(id int, dl string) types.QueueItem {
+		return queueItem(func(q *types.QueueItem) {
+			q.ID = id
+			q.SeriesID, q.EpisodeID = 0, 0
+			q.DownloadID = dl
+			q.Added = time.Time{}
+		})
+	}
+	for _, item := range []types.QueueItem{mk(450, "dl-a"), mk(451, "dl-b"), mk(452, "dl-c")} {
+		dec := mustEvaluate(t, e, issue(types.IssueStuckDownload, item))
+		assertApproved(t, dec, types.ActionRemoveQueue)
+	}
+
+	// Same download ID again within the duplicate window: the composite key
+	// matches, so the duplicate-action check rejects it (the downloadId-based
+	// cooldown bucket is only reachable across different items).
+	dec := mustEvaluate(t, e, issue(types.IssueStuckDownload, mk(453, "dl-a")))
+	assertRejected(t, dec, "duplicate.action")
+}
+
 // ─── not_custom_format gates ────────────────────────────────────────────
 
 func TestEvaluateNotCustomFormatGates(t *testing.T) {

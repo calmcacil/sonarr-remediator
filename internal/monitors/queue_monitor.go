@@ -234,10 +234,12 @@ func discardLogs(discards []types.QueueItem) []discardLog {
 // non-targeted winners immediately and routes targeted hits through episode
 // reconciliation.
 func (m *QueueMonitor) evaluateItem(ctx context.Context, item types.QueueItem, all []types.QueueItem) *types.Issue {
-	// History is fetched on demand: only for eligible items and only when at
-	// least one detector is registered (SPEC §3.1).
+	// History is fetched on demand: only for eligible items with a real
+	// episode (unknown-series items have episodeId 0 and no history to
+	// consult) and only when at least one detector is registered (SPEC
+	// §3.1).
 	var history []types.HistoryItem
-	if len(m.detectors) > 0 && eligibleStatus(item.Status) {
+	if item.EpisodeID != 0 && len(m.detectors) > 0 && eligibleStatus(item.Status) {
 		history = m.getHistory(item.EpisodeID)
 	}
 

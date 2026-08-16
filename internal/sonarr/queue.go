@@ -13,9 +13,16 @@ import (
 //
 // Sonarr serves the queue as a paged envelope (SPEC §12): one page of up to
 // 1000 items is requested and the records are unwrapped. A queue larger than
-// that is out of scope for a sidecar remediator.
+// that is out of scope for a sidecar remediator. includeUnknownSeriesItems is
+// set explicitly: Sonarr's default hides items whose series is not in the
+// library (e.g. series-title-mismatch imports blocked before any series
+// match), which are exactly the stuck items a remediator must see.
 func (c *Client) GetQueue(ctx context.Context) ([]types.QueueItem, error) {
-	q := url.Values{"page": {"1"}, "pageSize": {"1000"}}
+	q := url.Values{
+		"page":                      {"1"},
+		"pageSize":                  {"1000"},
+		"includeUnknownSeriesItems": {"true"},
+	}
 	var page types.Page[types.QueueItem]
 	if err := c.do(ctx, http.MethodGet, "/api/v3/queue", q, nil, &page); err != nil {
 		return nil, err
