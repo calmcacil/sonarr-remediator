@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/calmcacil/sonarr-remediator/compare/v0.4.0...v0.5.0) (2026-08-16)
+
+
+### Features
+
+* switch logging to key=value text with a type field ([#8](https://github.com/calmcacil/sonarr-remediator/issues/8)) ([8adfc7c](https://github.com/calmcacil/sonarr-remediator/commit/8adfc7cb79a08f3f6cff2d1c628598396c315011))
+
 ## [0.4.0](https://github.com/calmcacil/sonarr-remediator/compare/v0.3.6...v0.4.0) (2026-08-16)
 
 
