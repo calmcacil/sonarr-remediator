@@ -1,6 +1,6 @@
 # Sonarr Recovery Agent — Project Specification
 
-This specification describes the complete implementation. No production testing will occur until all features described here are implemented.
+This specification describes the complete implementation. Current release: v0.4.0 (alpha).
 
 ---
 
