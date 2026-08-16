@@ -80,20 +80,19 @@ func (e *Executor) removeQueue(ctx context.Context, decision types.Decision) err
 	item := decision.Issue.QueueItem
 	id := strconv.Itoa(item.ID)
 
-	if decision.DryRun {
-		msg := "Would have removed queue item " + id
-		if decision.Issue.Type == types.IssueTorrentError {
-			rule := e.cfg.Automation.RemoveTorrentErrors
-			msg = "Would have removed queue item " + id +
-				" (torrent client error: blocklist=" + strconv.FormatBool(rule.BlocklistRelease) +
-				", redownload=" + strconv.FormatBool(rule.Redownload) + ")"
-		}
-		e.logger.Info(msg, e.decisionAttrs(decision, "action.recommended", msg)...)
-		return nil
+	// Specialized flows own their dry-run messaging and dispatch before the
+	// generic short-circuit.
+	if decision.Issue.Type == types.IssueUnknownSeries {
+		return e.resolveUnknownSeries(ctx, decision, id)
 	}
-
 	if decision.Issue.Type == types.IssueTorrentError {
 		return e.removeTorrentError(ctx, decision, id)
+	}
+
+	if decision.DryRun {
+		msg := "Would have removed queue item " + id
+		e.logger.Info(msg, e.decisionAttrs(decision, "action.recommended", msg)...)
+		return nil
 	}
 
 	blocklist := e.cfg.Automation.RemoveBrokenDownloads.BlocklistRelease
@@ -113,6 +112,96 @@ func (e *Executor) removeQueue(ctx context.Context, decision types.Decision) err
 	return nil
 }
 
+// resolveUnknownSeries handles a queue item whose series Sonarr does not
+// know (SPEC §3.10): the manual-import preview anchored to the tracked
+// download resolves the real series and episodes, so the item is imported
+// through the ManualImport command (proven by the queue poll); only when the
+// preview finds nothing — or fails — is the item removed as a fallback. The
+// preview is read-only and is also performed in dry-run so the
+// recommendation names the exact outcome.
+func (e *Executor) resolveUnknownSeries(ctx context.Context, decision types.Decision, id string) error {
+	item := decision.Issue.QueueItem
+	attrs := e.decisionAttrs(decision, "action.taken", "Removed queue item "+id)
+
+	files, err := e.client.ManualImportPreview(ctx, item.DownloadID)
+	if err != nil {
+		return e.removeUnknownSeriesFallback(ctx, decision, id, fmt.Sprintf("manual-import preview failed: %v", err))
+	}
+	file := recovery.SelectPreviewMatched(files)
+	if file == nil {
+		return e.removeUnknownSeriesFallback(ctx, decision, id, "manual-import preview found no series match")
+	}
+
+	episodeIDs := make([]int, 0, len(file.Episodes))
+	for _, ep := range file.Episodes {
+		episodeIDs = append(episodeIDs, ep.ID)
+	}
+	seriesID := item.SeriesID
+	if seriesID == 0 {
+		ep, err := e.client.GetEpisode(ctx, episodeIDs[0])
+		if err != nil {
+			return e.removeUnknownSeriesFallback(ctx, decision, id, "could not resolve the matched episode's series")
+		}
+		seriesID = ep.SeriesID
+	}
+	langs := file.Languages
+	if len(langs) == 0 {
+		langs = []types.LanguageModel{{Name: "Unknown"}}
+	}
+	cmd := types.ManualImportCommand{
+		Name:       "ManualImport",
+		ImportMode: "auto",
+		Files: []types.ManualImportCommandFile{{
+			Path:       file.Path,
+			SeriesID:   seriesID,
+			EpisodeIDs: episodeIDs,
+			Quality:    file.Quality,
+			Languages:  langs,
+			DownloadID: item.DownloadID,
+		}},
+	}
+
+	if decision.DryRun {
+		msg := fmt.Sprintf("Would have imported %s for episodes %v (unknown-series manual import)", file.Path, episodeIDs)
+		e.logger.Info(msg, e.decisionAttrs(decision, "action.recommended", msg)...)
+		return nil
+	}
+
+	ok, err := recovery.SubmitAndWait(ctx, e.client, cmd, item, e.logger)
+	if err != nil {
+		e.logger.Error("unknown-series manual import command failed",
+			append(attrs, "candidate_path", file.Path, "error", err)...)
+		return fmt.Errorf("executor: unknown-series import for queue item %d: %w", item.ID, err)
+	}
+	if !ok {
+		e.logger.Info("unknown-series import did not clear the queue item; no mutation reported",
+			append(attrs, "candidate_path", file.Path)...)
+		return nil
+	}
+	e.logger.Info("auto-imported "+file.Path+" (unknown-series manual import)",
+		append(attrs, "candidate_path", file.Path, "episodes", episodeIDs, "action", string(types.ActionManualImport))...)
+	return nil
+}
+
+// removeUnknownSeriesFallback logs the fallback removal (recommended in
+// dry-run, executed live) when the manual-import resolution cannot proceed.
+func (e *Executor) removeUnknownSeriesFallback(ctx context.Context, decision types.Decision, id, reason string) error {
+	msg := "Would have removed queue item " + id + " (" + reason + ")"
+	if decision.DryRun {
+		e.logger.Info(msg, e.decisionAttrs(decision, "action.recommended", msg)...)
+		return nil
+	}
+	attrs := e.decisionAttrs(decision, "action.taken", "Removed queue item "+id)
+	if err := e.client.RemoveQueueItem(ctx, decision.Issue.QueueItem.ID, false); err != nil {
+		msg := "Failed to remove queue item " + id
+		e.logger.Error(msg,
+			append(e.decisionAttrs(decision, "action.error", msg), "error", err)...)
+		return fmt.Errorf("executor: remove queue item %d: %w", decision.Issue.QueueItem.ID, err)
+	}
+	e.logger.Info("Removed queue item "+id+" ("+reason+")", attrs...)
+	return nil
+}
+
 // removeTorrentError removes a torrent-client error item and, per the
 // removeTorrentErrors rule, blocklists the release and triggers a replacement
 // search (SPEC §3.9). Order matters: the removal happens first so the
@@ -122,6 +211,14 @@ func (e *Executor) removeTorrentError(ctx context.Context, decision types.Decisi
 	item := decision.Issue.QueueItem
 	rule := e.cfg.Automation.RemoveTorrentErrors
 	attrs := e.decisionAttrs(decision, "action.taken", "Removed queue item "+id)
+
+	if decision.DryRun {
+		msg := "Would have removed queue item " + id +
+			" (torrent client error: blocklist=" + strconv.FormatBool(rule.BlocklistRelease) +
+			", redownload=" + strconv.FormatBool(rule.Redownload) + ")"
+		e.logger.Info(msg, e.decisionAttrs(decision, "action.recommended", msg)...)
+		return nil
+	}
 
 	if err := e.client.RemoveQueueItem(ctx, item.ID, false); err != nil {
 		msg := "Failed to remove queue item " + id

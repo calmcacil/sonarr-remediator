@@ -216,6 +216,19 @@ func SelectPreviewFile(files []types.ManualImportFile, item types.QueueItem) *ty
 	return nil
 }
 
+// SelectPreviewMatched picks the first preview file Sonarr matched to real
+// episodes. Used for items with no series identity (unknown-series
+// resolution, SPEC §3.10): there is no queue-item episode to anchor on, so a
+// file without matched episodes cannot be imported.
+func SelectPreviewMatched(files []types.ManualImportFile) *types.ManualImportFile {
+	for i := range files {
+		if len(files[i].Episodes) > 0 {
+			return &files[i]
+		}
+	}
+	return nil
+}
+
 // evaluatePreview scores a previewed file against the expected episode
 // (SPEC §3.4 steps 3-5). Sonarr's own match is the source of truth: a file
 // with matched episodes means Sonarr resolved the series and episode (tvdb +

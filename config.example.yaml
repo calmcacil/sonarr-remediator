@@ -56,6 +56,14 @@ automation:
     blocklistRelease: true
     redownload: true
 
+  # Unknown-series downloads (seriesId/episodeId null, e.g. torboxarr
+  # hash-titled items blocked with "Series title mismatch"): resolve via the
+  # manual-import preview first (import with Sonarr's own match), remove only
+  # as a fallback when the preview finds nothing.
+  resolveUnknownSeries:
+    enabled: true
+    waitHours: 1
+
   retryImports:
     enabled: true
     retryIntervals:

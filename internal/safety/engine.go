@@ -185,6 +185,16 @@ func (e *Engine) gatesFor(issue types.Issue) []types.CheckResult {
 			{Check: "queue.trackedDownloadState", Expected: "!= importing", Actual: item.TrackedDownloadState, Passed: item.TrackedDownloadState != "importing"},
 			e.retryCheck(key),
 		}
+	case types.IssueUnknownSeries:
+		rule := e.cfg.Automation.ResolveUnknownSeries
+		return []types.CheckResult{
+			{Check: "rule.enabled", Expected: "true", Actual: strconv.FormatBool(rule.Enabled), Passed: rule.Enabled},
+			{Check: "queue.status", Expected: "completed|warning|failed", Actual: item.Status, Passed: eligibleStatus(item.Status)},
+			{Check: "series.unknown", Expected: "seriesId=0 episodeId=0", Actual: item.CompositeKey(), Passed: IsUnknownSeriesItem(item)},
+			e.ageCheck(item, rule.WaitHours),
+			{Check: "queue.trackedDownloadState", Expected: "!= importing", Actual: item.TrackedDownloadState, Passed: item.TrackedDownloadState != "importing"},
+			e.retryCheck(key),
+		}
 	case types.IssueImportFailed:
 		autoImport := e.cfg.Automation.AutoManualImport.Enabled
 		retryImports := e.cfg.Automation.RetryImports.Enabled
@@ -464,6 +474,12 @@ func cooldownKey(item types.QueueItem) string {
 		return "dl:" + item.DownloadID
 	}
 	return strconv.Itoa(item.SeriesID) + ":" + strconv.Itoa(item.EpisodeID)
+}
+
+// IsUnknownSeriesItem reports whether the queue item has no series identity
+// (seriesId and episodeId both zero).
+func IsUnknownSeriesItem(item types.QueueItem) bool {
+	return item.SeriesID == 0 && item.EpisodeID == 0
 }
 
 // eligibleStatus reports whether a queue status is eligible for action

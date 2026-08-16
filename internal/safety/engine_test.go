@@ -402,6 +402,69 @@ func TestEvaluateTorrentErrorGates(t *testing.T) {
 	}
 }
 
+// ─── unknown_series gates (SPEC §3.10) ─────────────────────────────────
+
+func TestEvaluateUnknownSeriesGates(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutateCfg    func(*config.Config)
+		mutateItem   func(*types.QueueItem)
+		wantApproved bool
+		failAt       string
+		wantChecks   int // 0 = do not assert the count
+	}{
+		{name: "rule disabled", mutateCfg: func(c *config.Config) { c.Automation.ResolveUnknownSeries.Enabled = false },
+			wantApproved: false, failAt: "rule.enabled", wantChecks: 1},
+		{name: "status queued", mutateItem: func(q *types.QueueItem) { q.Status = "queued" },
+			wantApproved: false, failAt: "queue.status", wantChecks: 2},
+		{name: "series known", mutateItem: func(q *types.QueueItem) { q.SeriesID, q.EpisodeID = 42, 105 },
+			wantApproved: false, failAt: "series.unknown", wantChecks: 3},
+		{name: "age below waitHours", mutateItem: func(q *types.QueueItem) { q.Added = time.Now().Add(-30 * time.Minute) },
+			wantApproved: false, failAt: "age_hours", wantChecks: 4},
+		{name: "state importing", mutateItem: func(q *types.QueueItem) { q.TrackedDownloadState = "importing" },
+			wantApproved: false, failAt: "queue.trackedDownloadState", wantChecks: 5},
+		{name: "retry scheduled", mutateItem: func(q *types.QueueItem) { q.DownloadID = "dl-retry" },
+			wantApproved: false, failAt: "retry.scheduled", wantChecks: 6},
+		{name: "all pass", wantApproved: true, failAt: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseConfig()
+			cfg.Automation.ResolveUnknownSeries = config.ResolveUnknownSeriesConfig{Enabled: true, WaitHours: 1}
+			if tc.mutateCfg != nil {
+				tc.mutateCfg(cfg)
+			}
+			e, _ := newEngine(t, cfg)
+			e.SetSonarrUp(true)
+			item := queueItem(func(q *types.QueueItem) {
+				q.SeriesID, q.EpisodeID = 0, 0
+				q.Status = "completed"
+				q.TrackedDownloadStatus = "warning"
+				q.TrackedDownloadState = "importBlocked"
+				q.Added = time.Time{}
+			})
+			if tc.mutateItem != nil {
+				tc.mutateItem(&item)
+			}
+
+			if tc.failAt == "retry.scheduled" {
+				e.SetRetryActive(item.CompositeKey(), true)
+			}
+
+			dec := mustEvaluate(t, e, issue(types.IssueUnknownSeries, item))
+			if tc.wantApproved {
+				assertApproved(t, dec, types.ActionRemoveQueue)
+			} else {
+				assertRejected(t, dec, tc.failAt)
+			}
+			if tc.wantChecks > 0 && len(dec.Checks) != tc.wantChecks {
+				t.Fatalf("checks = %d, want %d (short-circuit length)", len(dec.Checks), tc.wantChecks)
+			}
+		})
+	}
+}
+
 // ─── import_failed gates ────────────────────────────────────────────────
 
 func TestEvaluateImportFailedGates(t *testing.T) {

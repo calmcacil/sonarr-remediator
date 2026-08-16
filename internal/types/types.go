@@ -353,6 +353,7 @@ const (
 	IssueStuckDownload   IssueType = "stuck_download"
 	IssueNotCustomFormat IssueType = "not_custom_format_upgrade"
 	IssueTorrentError    IssueType = "torrent_client_error"
+	IssueUnknownSeries   IssueType = "unknown_series"
 	IssueImportFailed    IssueType = "import_failed"
 	IssueReconcile       IssueType = "reconcile"
 )
@@ -380,7 +381,7 @@ type Issue struct {
 // ActionTypeFor maps an issue type to its default action.
 func (i Issue) ActionTypeFor() ActionType {
 	switch i.Type {
-	case IssueStuckDownload, IssueNotCustomFormat, IssueTorrentError:
+	case IssueStuckDownload, IssueNotCustomFormat, IssueTorrentError, IssueUnknownSeries:
 		return ActionRemoveQueue
 	case IssueImportFailed:
 		return ActionManualImport
@@ -400,6 +401,8 @@ func (t IssueType) Priority() int {
 	case IssueNotCustomFormat:
 		return 2
 	case IssueTorrentError:
+		return 2
+	case IssueUnknownSeries:
 		return 2
 	case IssueReconcile:
 		return 2

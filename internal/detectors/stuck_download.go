@@ -14,15 +14,17 @@ import (
 // StuckDownloadDetector flags downloads that will never import successfully
 // (SPEC §3.2).
 type StuckDownloadDetector struct {
-	logger    *slog.Logger
-	waitHours time.Duration // automation.removeBrokenDownloads.waitHours
+	logger              *slog.Logger
+	waitHours           time.Duration // automation.removeBrokenDownloads.waitHours
+	deferUnknownSeries  bool          // resolveUnknownSeries rule owns unknown-series items
 }
 
 // NewStuckDownloadDetector builds the stuck-download detector.
 func NewStuckDownloadDetector(cfg *config.Config, logger *slog.Logger) Detector {
 	return &StuckDownloadDetector{
-		logger:    logger.With("component", "detector"),
-		waitHours: hours(cfg.Automation.RemoveBrokenDownloads.WaitHours),
+		logger:             logger.With("component", "detector"),
+		waitHours:          hours(cfg.Automation.RemoveBrokenDownloads.WaitHours),
+		deferUnknownSeries: cfg.Automation.ResolveUnknownSeries.Enabled,
 	}
 }
 
@@ -36,6 +38,13 @@ func (d *StuckDownloadDetector) Detect(ctx context.Context, item types.QueueItem
 	switch item.Status {
 	case "completed", "warning", "failed":
 	default:
+		return nil, nil
+	}
+
+	// Unknown-series items are owned by the unknown_series detector (§3.10):
+	// they get the manual-import resolution first and removal only as a
+	// fallback, which the generic stuck removal cannot express.
+	if d.deferUnknownSeries && IsUnknownSeries(item) {
 		return nil, nil
 	}
 

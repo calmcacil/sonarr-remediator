@@ -33,6 +33,10 @@ func Defaults() *Config {
 				BlocklistRelease:    true,
 				Redownload:          true,
 			},
+			ResolveUnknownSeries: ResolveUnknownSeriesConfig{
+				Enabled:   true,
+				WaitHours: 1,
+			},
 			RetryImports: RetryImportsConfig{
 				Enabled: true,
 				RetryIntervals: []Duration{

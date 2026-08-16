@@ -462,7 +462,53 @@ vanish into the dying job), creating an infinite loop.
 
 ---
 
-### 3.10 Action Log
+### 3.10 Unknown-Series Download Resolution
+
+Queue items whose series Sonarr does not know: `seriesId` and `episodeId`
+are null, the download is otherwise complete, and the import is typically
+blocked with the "Series title mismatch" status message. This happens when a
+torrent bridge (torboxarr) reports a synthetic hash as the queue title, so
+Sonarr's automatic import cannot match the release. The item would otherwise
+be a permanent orphan — and it is invisible to queue fetches that omit
+`includeUnknownSeriesItems=true` (SPEC §3.1, §12).
+
+**Key insight:** the manual-import preview anchored to the tracked download
+(`GET /api/v3/manualimport?downloadId=…`) resolves the real series and
+episodes from the download folder and the grab history even though the queue
+item carries no series identity (verified against prod: hash-titled
+torboxarr downloads preview with their true series/episode, quality, and
+languages). The resolution therefore does **more work than removal**:
+
+1. **Preview** the download (read-only; also performed in dry-run so the
+   recommendation names the exact outcome).
+2. **Import** when a preview file has matched episodes: a `ManualImport`
+   command is submitted with Sonarr's own quality, languages, and episode
+   IDs plus the series ID of the matched episode (fetched from Sonarr), and
+   the import is proven by the queue poll (SPEC §3.2). No custom-format
+   upgrade gate applies — this is exactly the UI's manual Import button.
+3. **Fallback removal** only when the preview finds no series match or
+   fails: the item is removed from the queue (`DELETE /api/v3/queue/{id}`).
+   Blocklisting is not attempted: with no series identity, no grabbed
+   history can be located.
+
+**Safety checks (see §7):**
+
+| Check | Expected |
+|---|---|
+| `rule.enabled` | `true` |
+| `queue.status` | `completed\|warning\|failed` |
+| `series.unknown` | `seriesId=0 episodeId=0` |
+| `age_hours` | `>= waitHours` (1) |
+| `queue.trackedDownloadState` | `!= importing` |
+| `retry.scheduled` | `false` |
+
+Unknown-series items are never grouped into episode reconciliation — they
+have no episode to reconcile — and the stuck-download detector defers to this
+rule while it is enabled.
+
+---
+
+### 3.11 Action Log
 
 The agent's only output surface. Every action produces exactly one structured log line:
 
@@ -1143,6 +1189,10 @@ automation:
     errorMessagePattern: "" # default: "(?i)qBittorrent is reporting an error"
     blocklistRelease: true
     redownload: true
+
+  resolveUnknownSeries:
+    enabled: true
+    waitHours: 1
 
   retryImports:
     enabled: true

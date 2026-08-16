@@ -88,6 +88,7 @@ type AutomationConfig struct {
 	RemoveNotCustomFormat RemoveNotCustomFormatConfig `yaml:"removeNotCustomFormat"`
 	RemoveBrokenDownloads RemoveBrokenDownloadsConfig `yaml:"removeBrokenDownloads"`
 	RemoveTorrentErrors   RemoveTorrentErrorsConfig   `yaml:"removeTorrentErrors"`
+	ResolveUnknownSeries  ResolveUnknownSeriesConfig  `yaml:"resolveUnknownSeries"`
 	RetryImports          RetryImportsConfig          `yaml:"retryImports"`
 	AutoManualImport      AutoManualImportConfig      `yaml:"autoManualImport"`
 	Reconcile             ReconcileConfig             `yaml:"reconcile"`
@@ -122,6 +123,17 @@ type RemoveTorrentErrorsConfig struct {
 	ErrorMessagePattern  string  `yaml:"errorMessagePattern"`
 	BlocklistRelease     bool    `yaml:"blocklistRelease"`
 	Redownload           bool    `yaml:"redownload"`
+}
+
+// ResolveUnknownSeriesConfig gates resolution of queue items whose series is
+// unknown to Sonarr (seriesId/episodeId null, e.g. torrent bridges reporting
+// a synthetic hash as the title, causing "Series title mismatch"). The
+// manual-import preview anchored to the tracked download still resolves the
+// real series and episodes, so the item is imported through the ManualImport
+// command; only when the preview finds nothing is the item removed.
+type ResolveUnknownSeriesConfig struct {
+	Enabled   bool    `yaml:"enabled"`
+	WaitHours float64 `yaml:"waitHours"`
 }
 
 // RetryImportsConfig configures transient-failure retries.

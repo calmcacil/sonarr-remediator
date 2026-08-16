@@ -99,6 +99,7 @@ func newPipeline(t *testing.T, m *MockSonarr, cfg *config.Config) *pipeline {
 		detectors.NewStuckDownloadDetector(cfg, logger),
 		detectors.NewNotCustomFormatDetector(cfg, logger),
 		detectors.NewTorrentErrorDetector(cfg, logger),
+		detectors.NewUnknownSeriesDetector(cfg, logger),
 		detectors.NewImportRecoveryDetector(cfg, logger),
 	}
 	return &pipeline{cfg: cfg, client: client, engine: engine, retry: retry, exec: exec, dets: dets, logs: logs}
@@ -1293,5 +1294,138 @@ func TestScenarioUnknownSeriesItemsDoNotReconcile(t *testing.T) {
 	}
 	if len(logsWithEvent(t, p, "reconcile.plan")) != 0 {
 		t.Fatal("unknown-series items must not produce episode reconciliation plans")
+	}
+}
+// TestScenarioUnknownSeriesManualImport: the manual-import preview anchored
+// to the tracked download resolves the real series and episodes even though
+// the queue item's seriesId/episodeId are null — the item is imported via
+// the ManualImport command instead of being removed.
+func TestScenarioUnknownSeriesManualImport(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+
+	item := unknownSeriesItem()
+	m.SetQueue(item)
+	// Sonarr's preview resolves the download: one file matched to the real
+	// episode, with quality and languages.
+	season := 1
+	m.SetManualImportPreview(types.ManualImportFile{
+		Path:         "/staging/torboxarr/completed/sonarr/86267168ada4b386e9a55cce8955bb769111da75/[Erai-raws] Tenmaku no Jaadugar - 08.mkv",
+		Name:         "[Erai-raws] Tenmaku no Jaadugar - 08.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 3, Name: "WEBRip-1080p"}},
+		Languages:    []types.LanguageModel{{ID: 8, Name: "Japanese"}},
+		SeasonNumber: &season,
+		Episodes:     []types.EpisodeLookup{{ID: 50145, EpisodeNumber: 8, SeasonNumber: 1}},
+	})
+	// The matched episode's series is what the import command must carry.
+	m.SetEpisode(50145, types.EpisodeResource{ID: 50145, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 8, HasFile: false})
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, item, nil)
+	mustApproved(t, dec)
+
+	posts := m.Posts()
+	if len(posts) != 1 {
+		t.Fatalf("posts = %d, want exactly 1 ManualImport command", len(posts))
+	}
+	req := importCommandBody(t, posts[0])
+	if len(req.Files) != 1 {
+		t.Fatalf("command files = %d, want 1", len(req.Files))
+	}
+	f := req.Files[0]
+	if f.SeriesID != 42 {
+		t.Fatalf("seriesId = %d, want 42 (from the matched episode, not the null queue item)", f.SeriesID)
+	}
+	if len(f.EpisodeIDs) != 1 || f.EpisodeIDs[0] != 50145 {
+		t.Fatalf("episodeIds = %v, want [50145] from the preview match", f.EpisodeIDs)
+	}
+	if f.DownloadID != item.DownloadID {
+		t.Fatalf("downloadId = %q, want %q", f.DownloadID, item.DownloadID)
+	}
+	if len(f.Languages) != 1 || f.Languages[0].ID != 8 {
+		t.Fatalf("languages = %v, want the preview languages", f.Languages)
+	}
+	if n := len(m.Deletes()); n != 0 {
+		t.Fatalf("deletes = %d, want 0 (the item is imported, not removed)", n)
+	}
+	imported := false
+	for _, rec := range logLines(t, p) {
+		if msg, _ := rec["msg"].(string); strings.HasPrefix(msg, "auto-imported ") {
+			imported = true
+		}
+	}
+	if !imported {
+		t.Fatal("expected an auto-import log")
+	}
+}
+
+// TestScenarioUnknownSeriesManualImportDryRun: dry-run previews (read-only)
+// and logs the intended import without mutating anything.
+func TestScenarioUnknownSeriesManualImportDryRun(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = true
+
+	item := unknownSeriesItem()
+	m.SetQueue(item)
+	season := 1
+	m.SetManualImportPreview(types.ManualImportFile{
+		Path:         "/staging/torboxarr/completed/sonarr/hash/[Erai-raws] Mao - 20.mkv",
+		Name:         "[Erai-raws] Mao - 20.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 3, Name: "WEBRip-1080p"}},
+		Languages:    []types.LanguageModel{{ID: 8, Name: "Japanese"}},
+		SeasonNumber: &season,
+		Episodes:     []types.EpisodeLookup{{ID: 45302, EpisodeNumber: 20, SeasonNumber: 1}},
+	})
+	m.SetEpisode(45302, types.EpisodeResource{ID: 45302, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 20, HasFile: false})
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, item, nil)
+	mustApproved(t, dec)
+
+	noMutations(t, m)
+	recs := logsWithEvent(t, p, "action.recommended")
+	if len(recs) != 1 {
+		t.Fatalf("action.recommended logs = %d, want 1", len(recs))
+	}
+	msg, _ := recs[0]["msg"].(string)
+	if !strings.Contains(msg, "Would have imported") || !strings.Contains(msg, "unknown-series manual import") {
+		t.Fatalf("message = %q, want the manual-import recommendation", msg)
+	}
+}
+
+// TestScenarioUnknownSeriesNoMatchRemoves: the preview cannot resolve the
+// download — the fallback removal takes over.
+func TestScenarioUnknownSeriesNoMatchRemoves(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+
+	item := unknownSeriesItem()
+	m.SetQueue(item)
+	m.SetManualImportPreview() // empty preview: nothing matched
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, item, nil)
+	mustApproved(t, dec)
+
+	mut := singleMutation(t, m)
+	if mut.Method != http.MethodDelete || mut.Path != "/api/v3/queue/450" {
+		t.Fatalf("expected DELETE /api/v3/queue/450 fallback, got %s %s", mut.Method, mut.Path)
+	}
+	if len(m.Posts()) != 0 {
+		t.Fatalf("posts = %d, want 0 (no import without a preview match)", len(m.Posts()))
+	}
+	recs := logsWithEvent(t, p, "action.taken")
+	if len(recs) != 1 {
+		t.Fatalf("action.taken logs = %d, want 1", len(recs))
+	}
+	msg, _ := recs[0]["msg"].(string)
+	if !strings.Contains(msg, "manual-import preview found no series match") {
+		t.Fatalf("message = %q, want the fallback reason logged", msg)
 	}
 }

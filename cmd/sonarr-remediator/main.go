@@ -97,6 +97,7 @@ func main() {
 		detectors.NewStuckDownloadDetector(cfg, logger),
 		detectors.NewNotCustomFormatDetector(cfg, logger),
 		detectors.NewTorrentErrorDetector(cfg, logger),
+		detectors.NewUnknownSeriesDetector(cfg, logger),
 		detectors.NewImportRecoveryDetector(cfg, logger),
 	}
 
