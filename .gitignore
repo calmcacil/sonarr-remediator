@@ -5,3 +5,6 @@ config.local.yaml
 # Build artifacts
 sonarr-remediator
 sonarr-remediator-amd64
+
+# Test coverage output
+coverage.out

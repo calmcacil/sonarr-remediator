@@ -36,6 +36,7 @@ var version = "dev"
 func main() {
 	configPath := flag.String("config", "config.example.yaml", "path to configuration file")
 	healthcheck := flag.Bool("healthcheck", false, "validate configuration and Sonarr connectivity, then exit (container healthcheck)")
+	showVersion := flag.Bool("version", false, "print the build version and exit")
 	flag.Parse()
 
 	// Container healthcheck mode (DOCKER_SPEC.md §4): no monitors start and
@@ -44,7 +45,21 @@ func main() {
 		os.Exit(runHealthcheck(*configPath))
 	}
 
-	cfg, err := config.Load(*configPath)
+	// Version probe used by the CI/release pipeline smoke tests to verify the
+	// stamped build (DOCKER_SPEC.md §3).
+	if *showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+
+	os.Exit(run(*configPath))
+}
+
+// run starts the agent and blocks until shutdown completes. It returns the
+// process exit code; os.Exit happens only in main (after any defers in run
+// have executed), never while a defer is pending.
+func run(configPath string) int {
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fatal("failed to load config", err)
 	}
@@ -54,12 +69,12 @@ func main() {
 		fatal("failed to initialize logging", err)
 	}
 	mainLog := logger.With("component", "main")
-	mainLog.Info("starting sonarr recovery agent", "config", *configPath, "dry_run", cfg.DryRun, "version", version)
+	mainLog.Info("starting sonarr recovery agent", "config", configPath, "dry_run", cfg.DryRun, "version", version)
 
 	client, err := sonarr.New(cfg.Sonarr.URL, cfg.Sonarr.APIKey, cfg.Sonarr.Timeout.Std(), cfg.Sonarr.MaxConcurrency)
 	if err != nil {
 		mainLog.Error("failed to create sonarr client", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Root context: cancelled by the first SIGTERM/SIGINT (SPEC §11).
@@ -82,7 +97,7 @@ func main() {
 	// prerequisite; definitions load failure degrades gracefully.
 	if err := client.DetectVersion(ctx); err != nil {
 		mainLog.Error("sonarr version detection failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	mainLog.Info("detected sonarr version", "version", client.Version)
 
@@ -190,6 +205,7 @@ func main() {
 	}
 
 	mainLog.Info("shutdown complete")
+	return 0
 }
 
 // runHealthcheck validates the configuration and probes Sonarr, returning
@@ -214,7 +230,7 @@ func runHealthcheck(configPath string) int {
 		fmt.Fprintln(os.Stderr, "healthcheck: sonarr unreachable:", err)
 		return 1
 	}
-	fmt.Fprintf(os.Stdout, "healthcheck: ok (sonarr %s)\n", status.Version)
+	_, _ = fmt.Fprintf(os.Stdout, "healthcheck: ok (sonarr %s)\n", status.Version)
 	return 0
 }
 

@@ -60,10 +60,10 @@ type mockSonarr struct {
 	qualityDefs []types.QualityDefinition
 	languages   []types.Language
 
-	previewResp        []types.ManualImportFile // GET /api/v3/manualimport preview
-	previewErr         bool                     // preview answers 500 (files not on disk)
-	commandStatus      int                      // status for POST /api/v3/command
-	keepInQueue        bool                     // command does not clear the queue item
+	previewResp         []types.ManualImportFile // GET /api/v3/manualimport preview
+	previewErr          bool                     // preview answers 500 (files not on disk)
+	commandStatus       int                      // status for POST /api/v3/command
+	keepInQueue         bool                     // command does not clear the queue item
 	failCommandEpisodes map[int]bool
 }
 
@@ -82,7 +82,7 @@ func defaultMock() *mockSonarr {
 			{ID: 4, Name: "HDTV-1080p", Title: "HDTV-1080p", Weight: 100},
 			{ID: 5, Name: "Bluray-1080p", Title: "Bluray-1080p", Weight: 200},
 		},
-		languages:    []types.Language{{ID: 1, Name: "English"}},
+		languages:     []types.Language{{ID: 1, Name: "English"}},
 		commandStatus: http.StatusOK,
 	}
 }
@@ -263,12 +263,13 @@ func shortImportPoll(t *testing.T) {
 	})
 }
 
-// recoverWith runs Recover against the mock.
-func recoverWith(t *testing.T, m *mockSonarr, cfg *config.Config, item types.QueueItem) (error, *bytes.Buffer) {
+// recoverWith runs Recover against the mock, returning the log buffer and
+// the error.
+func recoverWith(t *testing.T, m *mockSonarr, cfg *config.Config, item types.QueueItem) (*bytes.Buffer, error) {
 	t.Helper()
 	var buf bytes.Buffer
 	err := Recover(context.Background(), m.client(t), cfg, item, testLogger(&buf))
-	return err, &buf
+	return &buf, err
 }
 
 // ─── Recover end-to-end (SPEC §3.4) ──────────────────────────────────
@@ -282,7 +283,7 @@ func TestRecoverImportsMatchedFile(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, buf := recoverWith(t, m, newCfg(), item)
+	buf, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -326,7 +327,7 @@ func TestRecoverDisabled(t *testing.T) {
 	cfg := newCfg()
 	cfg.Automation.AutoManualImport.Enabled = false
 
-	err, buf := recoverWith(t, m, cfg, item)
+	buf, err := recoverWith(t, m, cfg, item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -347,7 +348,7 @@ func TestRecoverEmptyPreview(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, buf := recoverWith(t, m, newCfg(), item)
+	buf, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -367,7 +368,7 @@ func TestRecoverUnmatchedFile(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, buf := recoverWith(t, m, newCfg(), item)
+	buf, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -390,7 +391,7 @@ func TestRecoverPreviewError(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, _ := recoverWith(t, m, newCfg(), item)
+	_, err := recoverWith(t, m, newCfg(), item)
 	if err == nil {
 		t.Fatal("Recover returned nil, want error when the preview 500s")
 	}
@@ -410,7 +411,7 @@ func TestRecoverBelowMinimumConfidence(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, buf := recoverWith(t, m, newCfg(), item)
+	buf, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -431,7 +432,7 @@ func TestRecoverUnknownDownloadID(t *testing.T) {
 	m := defaultMock()
 	m.previewResp = []types.ManualImportFile{previewFile()} // never served: unregistered
 
-	err, buf := recoverWith(t, m, newCfg(), queueItem())
+	buf, err := recoverWith(t, m, newCfg(), queueItem())
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -451,7 +452,7 @@ func TestRecoverEmptyDownloadID(t *testing.T) {
 	item := queueItem()
 	item.DownloadID = ""
 
-	err, _ := recoverWith(t, m, newCfg(), item)
+	_, err := recoverWith(t, m, newCfg(), item)
 	if err == nil {
 		t.Fatal("Recover returned nil, want error for an empty downloadId (live 500s)")
 	}
@@ -470,7 +471,7 @@ func TestRecoverPreImportCheckBetterFile(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, buf := recoverWith(t, m, newCfg(), item)
+	buf, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -489,7 +490,7 @@ func TestRecoverPreImportCheckNoFile(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, _ := recoverWith(t, m, newCfg(), item)
+	_, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -511,7 +512,7 @@ func TestRecoverMultiEpisode(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, _ := recoverWith(t, m, newCfg(), item)
+	_, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -537,7 +538,7 @@ func TestRecoverItemNotCleared(t *testing.T) {
 	item := queueItem()
 	withQueueItem(m, item)
 
-	err, buf := recoverWith(t, m, newCfg(), item)
+	buf, err := recoverWith(t, m, newCfg(), item)
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -619,16 +620,16 @@ func previewPtr(f types.ManualImportFile) *types.ManualImportFile { return &f }
 
 func TestPreviewEpisodes(t *testing.T) {
 	tests := []struct {
-		name      string
-		file      types.ManualImportFile
-		want      []int
+		name string
+		file types.ManualImportFile
+		want []int
 	}{
 		{
 			name: "filters wrong season and dedupes",
 			file: types.ManualImportFile{Episodes: []types.EpisodeLookup{
 				{ID: episodeID, SeasonNumber: 1},
 				{ID: episodeID2, SeasonNumber: 1},
-				{ID: 300, SeasonNumber: 2}, // wrong season
+				{ID: 300, SeasonNumber: 2},       // wrong season
 				{ID: episodeID, SeasonNumber: 1}, // duplicate
 				{ID: 0, SeasonNumber: 1},         // zero id
 			}},

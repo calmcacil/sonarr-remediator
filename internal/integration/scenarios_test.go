@@ -1076,6 +1076,7 @@ func TestScenarioReprocessEndpointNeverImports(t *testing.T) {
 		t.Fatalf("queue after reprocess = %+v, want item 900 still present", page.Records)
 	}
 }
+
 // torrentErrorItem is a queue item carrying the qBit error state signature:
 // Sonarr v4 maps qBit state=error to status "warning" with the localized
 // "qBittorrent is reporting an error" message, and the item never leaves the
@@ -1200,6 +1201,7 @@ func TestScenarioTorrentErrorDryRun(t *testing.T) {
 		t.Fatalf("message = %q, want torrent-error dry-run phrasing", msg)
 	}
 }
+
 // unknownSeriesItem is a queue item Sonarr could not map to a library
 // series: seriesId/episodeId are null, the import is blocked with the
 // series-title-mismatch message, and the item is invisible to queue fetches
@@ -1296,6 +1298,7 @@ func TestScenarioUnknownSeriesItemsDoNotReconcile(t *testing.T) {
 		t.Fatal("unknown-series items must not produce episode reconciliation plans")
 	}
 }
+
 // TestScenarioUnknownSeriesManualImport: the manual-import preview anchored
 // to the tracked download resolves the real series and episodes even though
 // the queue item's seriesId/episodeId are null — the item is imported via
@@ -1429,6 +1432,7 @@ func TestScenarioUnknownSeriesNoMatchRemoves(t *testing.T) {
 		t.Fatalf("message = %q, want the fallback reason logged", msg)
 	}
 }
+
 // rejectedUnknownSeriesPreview is a preview file Sonarr matched but then
 // rejected, e.g. because the episode already has a better file or the
 // release misses the custom-format cutoff.

@@ -27,14 +27,14 @@ type retryState struct {
 // items whose failures match configured retryable error patterns. State is
 // in-memory only; pending retries are lost on restart (SPEC §3.6).
 type RetryScheduler struct {
-	client     *sonarr.Client
-	cfg        *config.Config
-	engine     *safety.Engine
-	logger     *slog.Logger
-	patterns   []*regexp.Regexp
-	intervals  []time.Duration
-	baseCtx    context.Context
-	cancel     context.CancelFunc
+	client    *sonarr.Client
+	cfg       *config.Config
+	engine    *safety.Engine
+	logger    *slog.Logger
+	patterns  []*regexp.Regexp
+	intervals []time.Duration
+	baseCtx   context.Context
+	cancel    context.CancelFunc
 
 	mu       sync.Mutex
 	attempts map[string]*retryState
@@ -60,16 +60,16 @@ func NewRetryScheduler(client *sonarr.Client, cfg *config.Config, engine *safety
 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RetryScheduler{
-		client:     client,
-		cfg:        cfg,
-		engine:     engine,
-		logger:     logger,
-		patterns:   patterns,
-		intervals:  intervals,
-		baseCtx:    ctx,
-		cancel:     cancel,
-		attempts:   make(map[string]*retryState),
-		timers:     make(map[string]*time.Timer),
+		client:    client,
+		cfg:       cfg,
+		engine:    engine,
+		logger:    logger,
+		patterns:  patterns,
+		intervals: intervals,
+		baseCtx:   ctx,
+		cancel:    cancel,
+		attempts:  make(map[string]*retryState),
+		timers:    make(map[string]*time.Timer),
 	}
 }
 

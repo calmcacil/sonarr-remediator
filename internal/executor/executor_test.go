@@ -35,20 +35,20 @@ import (
 type mockSonarr struct {
 	srv *httptest.Server
 
-	mu                   sync.Mutex
-	version              string
-	queueItems           []types.QueueItem
-	queueStatus          int
-	deleteStatus         int
-	commandStatus        int
-	keepInQueue          bool // POST /api/v3/command does not clear the item
-	manualImportPreview  []types.ManualImportFile
-	previewErr           bool // GET /api/v3/manualimport answers 500 (files not on disk)
-	history              []types.HistoryItem
-	historyFailedPosts   []int // history ids POSTed to /api/v3/history/failed/{id}
-	series               map[int]types.SeriesResource
-	episodes             map[int]types.EpisodeResource
-	episodeFiles         map[int]types.EpisodeFileResource
+	mu                  sync.Mutex
+	version             string
+	queueItems          []types.QueueItem
+	queueStatus         int
+	deleteStatus        int
+	commandStatus       int
+	keepInQueue         bool // POST /api/v3/command does not clear the item
+	manualImportPreview []types.ManualImportFile
+	previewErr          bool // GET /api/v3/manualimport answers 500 (files not on disk)
+	history             []types.HistoryItem
+	historyFailedPosts  []int // history ids POSTed to /api/v3/history/failed/{id}
+	series              map[int]types.SeriesResource
+	episodes            map[int]types.EpisodeResource
+	episodeFiles        map[int]types.EpisodeFileResource
 
 	requests     []string // "METHOD path?query" for every request
 	previewCalls []string // downloadIds sent to GET /api/v3/manualimport
@@ -58,13 +58,13 @@ type mockSonarr struct {
 func newMockSonarr(t *testing.T) *mockSonarr {
 	t.Helper()
 	m := &mockSonarr{
-		version:              "4.0.0.741",
-		queueStatus:          http.StatusOK,
-		deleteStatus:         http.StatusOK,
-		commandStatus:        http.StatusOK,
-		series:               make(map[int]types.SeriesResource),
-		episodes:             make(map[int]types.EpisodeResource),
-		episodeFiles:         make(map[int]types.EpisodeFileResource),
+		version:       "4.0.0.741",
+		queueStatus:   http.StatusOK,
+		deleteStatus:  http.StatusOK,
+		commandStatus: http.StatusOK,
+		series:        make(map[int]types.SeriesResource),
+		episodes:      make(map[int]types.EpisodeResource),
+		episodeFiles:  make(map[int]types.EpisodeFileResource),
 	}
 
 	mux := http.NewServeMux()
@@ -302,11 +302,6 @@ func (m *mockSonarr) setDeleteStatus(code int) {
 func (m *mockSonarr) setCommandStatus(code int) {
 	m.mu.Lock()
 	m.commandStatus = code
-	m.mu.Unlock()
-}
-func (m *mockSonarr) setKeepInQueue(v bool) {
-	m.mu.Lock()
-	m.keepInQueue = v
 	m.mu.Unlock()
 }
 func (m *mockSonarr) setPreviewResp(resp []types.ManualImportFile) {

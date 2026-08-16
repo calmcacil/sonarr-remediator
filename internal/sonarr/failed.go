@@ -30,13 +30,13 @@ func (c *Client) MarkHistoryFailed(ctx context.Context, historyID int) error {
 // stripped, prefix tolerated) is returned; nil when nothing matches.
 func (c *Client) FindGrabbedHistory(ctx context.Context, seriesID, episodeID int, releaseTitle string) (*types.HistoryItem, error) {
 	records, err := c.GetHistory(ctx, types.HistoryParams{
-		Page:       1,
-		PageSize:   50,
-		SortKey:    "date",
+		Page:          1,
+		PageSize:      50,
+		SortKey:       "date",
 		SortDirection: "descending",
-		EventType:  1, // grabbed
-		SeriesID:   seriesID,
-		EpisodeID:  episodeID,
+		EventType:     1, // grabbed
+		SeriesID:      seriesID,
+		EpisodeID:     episodeID,
 	})
 	if err != nil {
 		return nil, err

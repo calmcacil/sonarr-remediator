@@ -25,8 +25,8 @@ import (
 func newMonitor(t *testing.T, history []types.HistoryItem) (*QueueMonitor, *safety.Engine) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v3/history":
+		switch r.URL.Path {
+		case "/api/v3/history":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(types.Page[types.HistoryItem]{Page: 1, PageSize: len(history), TotalRecords: len(history), Records: history})
 		default:
@@ -62,10 +62,10 @@ func queueMsgItem() types.QueueItem {
 
 func activeSibling() types.QueueItem {
 	return types.QueueItem{
-		SeriesID:  42,
-		EpisodeID: 105,
+		SeriesID:   42,
+		EpisodeID:  105,
 		DownloadID: "dl-b",
-		Status:    "downloading",
+		Status:     "downloading",
 	}
 }
 

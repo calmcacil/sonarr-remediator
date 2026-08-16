@@ -174,7 +174,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			}
 			lastErr = err
 			if attempt >= maxRetries {
-				return fmt.Errorf("sonarr: request %s %s failed: %w", method, path, err)
+				return fmt.Errorf("sonarr: request %s %s failed: %w", method, path, lastErr)
 			}
 			if err := c.sleep(ctx, attempt); err != nil {
 				return err

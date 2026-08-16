@@ -1,19 +1,53 @@
-.PHONY: build test lint run clean docker-build
+.PHONY: check format-check module-check lint test build vulnerability workflows docs docker-build run clean
 
-build:
-	go build -ldflags="-s -w" -o sonarr-remediator ./cmd/sonarr-remediator
+GOLANGCI_LINT_VERSION := v2.12.2
+ACTIONLINT_VERSION := v1.7.12
+GOVULNCHECK_VERSION := v1.6.0
+PROJECT_GO_TOOLCHAIN := go$(shell awk '$$1 == "go" { print $$2; exit }' go.mod)
+TOOL_RUN := GOTOOLCHAIN=$(PROJECT_GO_TOOLCHAIN) go run
+HOST_ARCH := $(shell go env GOARCH)
+IMAGE_NAME := sonarr-remediator
 
-test:
-	go test ./...
+check: format-check module-check lint test build vulnerability workflows docs docker-build
+
+format-check:
+	@test -z "$$(gofmt -l .)" || { echo "Run 'gofmt -w .' on:"; gofmt -l .; exit 1; }
+
+module-check:
+	go mod tidy -diff
+	go mod verify
+	go vet ./...
 
 lint:
-	go vet ./...
+	$(TOOL_RUN) github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --timeout=5m ./...
+
+test:
+	go test -race -count=1 ./...
+
+build:
+	@for arch in amd64 arm64; do \
+		GOOS=linux GOARCH=$$arch CGO_ENABLED=0 go build -trimpath \
+			-ldflags="-s -w -X main.version=local" \
+			-o "/tmp/$(IMAGE_NAME)-linux-$$arch" ./cmd/sonarr-remediator || exit 1; \
+	done
+
+vulnerability:
+	$(TOOL_RUN) golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+workflows:
+	$(TOOL_RUN) github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+
+docs:
+	python3 scripts/check-doc-links.py
+
+docker-build:
+	docker build --platform=linux/$(HOST_ARCH) --build-arg TARGETOS=linux --build-arg TARGETARCH=$(HOST_ARCH) --build-arg VERSION=local -t $(IMAGE_NAME):check-host .
+	docker run --rm --platform=linux/$(HOST_ARCH) $(IMAGE_NAME):check-host --version | grep -Fx local
+	docker build --platform=linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg VERSION=local -t $(IMAGE_NAME):check-amd64 .
+	docker build --platform=linux/arm64 --build-arg TARGETOS=linux --build-arg TARGETARCH=arm64 --build-arg VERSION=local -t $(IMAGE_NAME):check-arm64 .
 
 run:
 	go run ./cmd/sonarr-remediator --config config.example.yaml
 
 clean:
-	rm -f sonarr-remediator
-
-docker-build:
-	docker build -t ghcr.io/calmcacil/sonarr-remediator:latest .
+	rm -f $(IMAGE_NAME)

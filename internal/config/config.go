@@ -118,11 +118,11 @@ type RemoveBrokenDownloadsConfig struct {
 // POST /api/v3/history/failed/{id} — the queue DELETE blocklist parameter is
 // a no-op for these clients because their reported hash is synthetic.
 type RemoveTorrentErrorsConfig struct {
-	Enabled              bool    `yaml:"enabled"`
-	WaitHours            float64 `yaml:"waitHours"`
-	ErrorMessagePattern  string  `yaml:"errorMessagePattern"`
-	BlocklistRelease     bool    `yaml:"blocklistRelease"`
-	Redownload           bool    `yaml:"redownload"`
+	Enabled             bool    `yaml:"enabled"`
+	WaitHours           float64 `yaml:"waitHours"`
+	ErrorMessagePattern string  `yaml:"errorMessagePattern"`
+	BlocklistRelease    bool    `yaml:"blocklistRelease"`
+	Redownload          bool    `yaml:"redownload"`
 }
 
 // ResolveUnknownSeriesConfig gates resolution of queue items whose series is
@@ -273,9 +273,7 @@ func setField(fv reflect.Value, envVal string) error {
 		switch fv.Type().Elem().Kind() {
 		case reflect.String:
 			out := make([]string, len(parts))
-			for i, p := range parts {
-				out[i] = p
-			}
+			copy(out, parts)
 			fv.Set(reflect.ValueOf(out))
 			return nil
 		case reflect.Int:

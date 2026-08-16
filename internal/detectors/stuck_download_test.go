@@ -71,13 +71,13 @@ func TestStuckDownloadDetect_ReleaseContext(t *testing.T) {
 
 	got := iss.Details
 	want := map[string]any{
-		"trigger":            "abandoned",
-		"release_id":         "rel-1",
-		"release_title":      "Show.S01E05.720p.x265",
-		"episode_id":         105,
-		"episode_match":      "S01E05 Test Episode",
-		"episode_has_file":   true,
-		"existing_quality":   types.QualityName("HDTV-720p"),
+		"trigger":             "abandoned",
+		"release_id":          "rel-1",
+		"release_title":       "Show.S01E05.720p.x265",
+		"episode_id":          105,
+		"episode_match":       "S01E05 Test Episode",
+		"episode_has_file":    true,
+		"existing_quality":    types.QualityName("HDTV-720p"),
 		"custom_format_score": 1000,
 	}
 	for k, v := range want {

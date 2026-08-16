@@ -249,16 +249,17 @@ func (e *Executor) removeTorrentError(ctx context.Context, decision types.Decisi
 	blocklisted := false
 	if rule.BlocklistRelease {
 		h, err := e.client.FindGrabbedHistory(ctx, item.SeriesID, item.EpisodeID, item.Title)
-		if err != nil {
+		switch {
+		case err != nil:
 			e.logger.Warn("failed to look up grabbed history for blocklist",
 				"decision_id", decisionID(decision),
 				"item", item.CompositeKey(),
 				"error", err)
-		} else if h == nil {
+		case h == nil:
 			e.logger.Info("no grabbed history found for release; skipping blocklist",
 				"decision_id", decisionID(decision),
 				"item", item.CompositeKey())
-		} else {
+		default:
 			if err := e.client.MarkHistoryFailed(ctx, h.ID); err != nil {
 				e.logger.Error("failed to mark grabbed history as failed",
 					append(attrs, "history_id", h.ID, "error", err)...)
@@ -373,14 +374,15 @@ func (e *Executor) reconcile(ctx context.Context, decision types.Decision) error
 	var firstErr error
 	if upgrade {
 		imported, err := recovery.ReconcileImport(ctx, e.client, winner, e.baseLogger)
-		if err != nil {
+		switch {
+		case err != nil:
 			firstErr = err
 			msg := "Failed to import reconciliation winner " + id
 			e.logger.Error(msg, append(e.reconcileAttrs(decision, "action.error", msg, plan, upgrade), "error", err)...)
-		} else if imported {
+		case imported:
 			msg := "Imported reconciliation winner " + id
 			e.logger.Info(msg, e.reconcileAttrs(decision, "action.taken", msg, plan, upgrade)...)
-		} else {
+		default:
 			msg := "No importable candidate for reconciliation winner " + id + "; left in queue"
 			e.logger.Info(msg, append(e.reconcileAttrs(decision, "action.skipped", msg, plan, upgrade),
 				"reason", "no file matched in Sonarr preview or import rejected")...)

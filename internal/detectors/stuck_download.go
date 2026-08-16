@@ -14,9 +14,9 @@ import (
 // StuckDownloadDetector flags downloads that will never import successfully
 // (SPEC §3.2).
 type StuckDownloadDetector struct {
-	logger              *slog.Logger
-	waitHours           time.Duration // automation.removeBrokenDownloads.waitHours
-	deferUnknownSeries  bool          // resolveUnknownSeries rule owns unknown-series items
+	logger             *slog.Logger
+	waitHours          time.Duration // automation.removeBrokenDownloads.waitHours
+	deferUnknownSeries bool          // resolveUnknownSeries rule owns unknown-series items
 }
 
 // NewStuckDownloadDetector builds the stuck-download detector.

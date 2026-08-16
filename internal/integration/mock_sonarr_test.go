@@ -40,15 +40,15 @@ type MockSonarr struct {
 	handlers map[string]http.HandlerFunc // key: "METHOD path" or "METHOD /pattern/{id}"
 
 	// Response data (settable per test).
-	version      string
-	queueRaw     string
-	queue        []types.QueueItem
-	history      []types.HistoryItem
-	qualities    []types.QualityDefinition
-	languages    []types.Language
-	seriesByID   map[int]types.SeriesResource
-	episodeByID  map[int]types.EpisodeResource
-	fileByID     map[int]types.EpisodeFileResource
+	version             string
+	queueRaw            string
+	queue               []types.QueueItem
+	history             []types.HistoryItem
+	qualities           []types.QualityDefinition
+	languages           []types.Language
+	seriesByID          map[int]types.SeriesResource
+	episodeByID         map[int]types.EpisodeResource
+	fileByID            map[int]types.EpisodeFileResource
 	manualImportPreview []types.ManualImportFile // GET /api/v3/manualimport response
 
 	requests []recordedRequest
