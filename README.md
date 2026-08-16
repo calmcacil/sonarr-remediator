@@ -3,8 +3,10 @@
 A sidecar service that runs next to Sonarr, watches its queue and history,
 and automatically recovers from download and import problems that normally
 require manual intervention. It talks only to the Sonarr API — no HTTP
-server, no metrics endpoint, no notifications. Structured JSON logs on
-stdout are the only output; view them with `docker logs sonarr-remediator`.
+server, no metrics endpoint, no notifications. Key=value text logs on
+stderr, shaped `time= level= type= msg=` for easy filtering (e.g.
+`type=action.taken`, `type=error.sonarr-auth`), are the only interface;
+view them with `docker logs sonarr-remediator`.
 
 Current release: v0.4.0 (alpha). Releases are cut with release-please and
 published to `ghcr.io/calmcacil/sonarr-remediator`; see

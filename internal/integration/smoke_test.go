@@ -17,7 +17,7 @@ import (
 
 // TestSmokeBinary builds the real binary and runs it end to end against the
 // mock Sonarr server with a config file on disk: a not-custom-format removal
-// must be recommended (event=action.recommended with dry_run=true), zero
+// must be recommended (type=action.recommended with dry_run=true), zero
 // mutations may reach Sonarr, and SIGTERM must shut the process down
 // gracefully with exit code 0 (SPEC §11).
 func TestSmokeBinary(t *testing.T) {
@@ -123,16 +123,16 @@ dryRun: true
 	}
 
 	// (a) The action was recommended with dry_run=true.
-	out := stdout.String()
+	out := stderr.String()
 	var recommended bool
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, `"event":"action.recommended"`) && strings.Contains(line, `"dry_run":true`) {
+		if strings.Contains(line, "type=action.recommended") && strings.Contains(line, "dry_run=true") {
 			recommended = true
 			break
 		}
 	}
 	if !recommended {
-		t.Fatalf("stdout missing action.recommended with dry_run=true\nstdout:\n%s", out)
+		t.Fatalf("stderr missing action.recommended with dry_run=true\nstderr:\n%s", out)
 	}
 
 	// (b) Dry-run: zero POST/DELETE requests reached Sonarr.
@@ -290,15 +290,15 @@ dryRun: false
 	}
 
 	// (b) The plan was logged as a reconcile.plan event.
-	out := stdout.String()
+	out := stderr.String()
 	var planned bool
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, `"event":"reconcile.plan"`) && strings.Contains(line, `"episode_key":"42:105"`) {
+		if strings.Contains(line, "type=reconcile.plan") && strings.Contains(line, "episode_key=42:105") {
 			planned = true
 			break
 		}
 	}
 	if !planned {
-		t.Errorf("stdout missing reconcile.plan for 42:105\nstdout:\n%s", out)
+		t.Errorf("stderr missing reconcile.plan for 42:105\nstderr:\n%s", out)
 	}
 }

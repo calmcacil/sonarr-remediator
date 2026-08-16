@@ -35,7 +35,7 @@ It is **not** a cleanup script. It is a continuous recovery agent that observes 
 | Runtime | Long-running Go process — packaged as a Docker sidecar (see [DOCKER_SPEC.md](DOCKER_SPEC.md)) |
 | State | In-memory only (retries, decision ring buffer); all source data lives in Sonarr |
 | Configuration | YAML file + environment variable overrides with strict validation |
-| Observability | Structured JSON logs to stdout — the only output surface |
+| Observability | Key=value text logs to stderr (`time= level= type= msg=`) — the only output surface |
 | Safety | Dry-run mode, safety checks gate every destructive action, every action (or recommended action) is logged |
 | Interface | No HTTP server, no API, no metrics endpoint, no notifications — logs are the interface |
 
@@ -591,7 +591,7 @@ Successful detections that produce no action, and confidence breakdowns below th
 - **Safety Engine** receives `Issue` values, evaluates config-derived gates + global constraints, and produces `Decision` values.
 - **Action Executor** receives approved `Decision` values and performs Sonarr API calls (or logs "would have" in dry-run).
 - **Retry Scheduler** manages an in-memory timer-based retry queue (`executor/retry.go`).
-- **Decision Logger** emits every decision as a structured JSON log line (§9).
+- **Decision Logger** emits every decision as a structured key=value text log line (§9).
 
 ### Directory Structure
 
@@ -1117,31 +1117,12 @@ upgrade decision), and `discards` (id/release/score list).
 
 ### Decision Log Format
 
-Every evaluation produces a JSON log line:
+Every evaluation produces a key=value text log line; when an action is
+approved or rejected, the decision is logged with the event name as the
+`type` token:
 
-```json
-{
-  "timestamp": "2026-07-23T10:12:00Z",
-  "level": "info",
-  "component": "safety",
-  "event": "action.recommended",
-  "decision_id": "dec_abc123",
-  "item": {
-    "key": "42:105:abc123",
-    "id": 420,
-    "title": "Ubuntu.S01E05.1080p.WEB-DL",
-    "series": "Ubuntu",
-    "episode": "S01E05"
-  },
-  "trigger": "not_custom_format_upgrade",
-  "checks": [
-    {"check": "queue.status", "expected": "completed", "actual": "completed", "passed": true},
-    {"check": "age_hours", "expected": ">= 2", "actual": "6.3", "passed": true}
-  ],
-  "action": "remove_queue",
-  "message": "Would have removed queue item 420",
-  "dry_run": true
-}
+```text
+time=2026-07-23T10:12:00.000Z level=INFO type=action.recommended msg="Would have removed queue item 420" component=safety decision_id=dec_abc123 item= key="42:105:abc123" id=420 title="Ubuntu.S01E05.1080p.WEB-DL" series=Ubuntu episode=S01E05 trigger=not_custom_format_upgrade checks=[{"check":"queue.status","expected":"completed","actual":"completed","passed":true},{"check":"age_hours","expected":">= 2","actual":"6.3","passed":true}] action=remove_queue message="Would have removed queue item 420" dry_run=true
 ```
 
 ---
@@ -1291,10 +1272,11 @@ The agent must fail fast with clear errors for:
 
 ### Logging
 
-Structured JSON logs to stdout (container-native; consumed via `docker logs`, DOCKER_SPEC.md §1), implemented with the standard library `log/slog`.
+Structured key=value text logs to stderr (container-native; consumed via `docker logs`, DOCKER_SPEC.md §1), implemented with the standard library `log/slog`.
 
 - Levels: `debug`, `info`, `warn`, `error`.
-- Standard fields: `timestamp`, `level`, `component`, `message`.
+- Line shape: `time=... level=... type=... msg=...` followed by the remaining fields as `key=value` tokens. Values with spaces are quoted.
+- `type` is the filterable token: the `event` name when present (e.g. `action.taken`, `error.sonarr-auth`), otherwise the `component`, otherwise `log`.
 - `component` values: `config`, `sonarr`, `queue_monitor`, `health_monitor`, `detector`, `recovery`, `safety`, `executor`, `retry`, `main`.
 
 ### Action Log Events
@@ -1309,11 +1291,11 @@ Structured JSON logs to stdout (container-native; consumed via `docker logs`, DO
 | `error.sonarr-unreachable` | `error` | — | "Sonarr at http://sonarr:8989 not responding; monitors paused" |
 | `error.sonarr-auth` | `error` | — | "Sonarr rejected the configured credentials; monitors paused" |
 
-**Event-specific fields:**
+**Event-specific fields** (the `event` renders as the `type` token):
 
-- Action events: `event`, `decision_id`, `item` (key, id, title, series, episode), `trigger`, `checks` (see §7), `action`, `reason` (for `action.skipped`). Reconcile action events additionally carry `episode_key`, `upgrade`, and `discards` (id/release/score list).
-- Recovery events: `event`, `item`, `confidence`, `confidence_breakdown` (tvdb, season, episode, quality, language), `candidate_path`.
-- Retry events: `event`, `item`, `attempt`, `retries_left`, `next_retry_at`.
+- Action events: `type`, `decision_id`, `item` (key, id, title, series, episode), `trigger`, `checks` (see §7), `action`, `reason` (for `action.skipped`). Reconcile action events additionally carry `episode_key`, `upgrade`, and `discards` (id/release/score list).
+- Recovery events: `type`, `item`, `confidence`, `confidence_breakdown` (tvdb, season, episode, quality, language), `candidate_path`.
+- Retry events: `type`, `item`, `attempt`, `retries_left`, `next_retry_at`.
 
 Every approved action produces exactly one action event line. Routine detections that produce no action are `info` entries under `component=queue_monitor`/`detector` and are not events.
 
@@ -1375,7 +1357,7 @@ On receiving `SIGTERM` or `SIGINT`:
 
 1. Stop all monitors (no new poll cycles).
 2. Allow in-progress manual imports and Sonarr API calls to complete (timeout: 30 s).
-3. Flush decision log ring buffer to stdout.
+3. Flush decision log ring buffer to stderr.
 4. Exit with code 0.
 
 `stop_grace_period` must be at least 30 seconds (DOCKER_SPEC.md §8). A second
