@@ -528,6 +528,7 @@ The agent's only output surface. Every action produces exactly one structured lo
 | `action.skipped` | `info` | Action rejected by a safety check, with reason. An identical rejection for the same item, action, and reason is logged at `debug` for 5 minutes after the previous `info` line — stuck items would otherwise spam one full line per poll |
 | `import.failed-all-retries` | `warn` | All retries exhausted; manual intervention required |
 | `error.sonarr-unreachable` | `error` | Sonarr connectivity lost; monitors pause with backoff |
+| `error.sonarr-auth` | `error` | Sonarr rejected the credentials (401/403); monitors pause until they are fixed |
 
 Successful detections that produce no action, and confidence breakdowns below threshold, are logged as routine `info` entries (`component=recovery`, `component=queue_monitor`). The exact field schema is defined in §9.
 
@@ -690,7 +691,7 @@ At startup, `GetSystemStatus` returns a `Version` string like `"4.0.0.741"`. The
 
 **Error handling:**
 - All calls use `context.Context` for cancellation and timeouts.
-- `401`/`403` responses trigger an auth failure `error` log entry; monitors continue disabled until credentials are fixed.
+- `401`/`403` responses trigger an `error.sonarr-auth` log entry; monitors continue disabled until credentials are fixed.
 - Other `4xx` (except `429`) are terminal errors for that item.
 - `5xx` and network errors trigger exponential backoff with jitter (max 3 retries).
 - Concurrent request limiting via semaphore (max 5 concurrent requests).
@@ -1306,6 +1307,7 @@ Structured JSON logs to stdout (container-native; consumed via `docker logs`, DO
 | `reconcile.plan` | `info` | — | "episode reconciliation: import highest-scoring release, discard rest" (episode_key, winner, discards) |
 | `import.failed-all-retries` | `warn` | — | "Import permanently failed after 6 retries — manual intervention required" |
 | `error.sonarr-unreachable` | `error` | — | "Sonarr at http://sonarr:8989 not responding; monitors paused" |
+| `error.sonarr-auth` | `error` | — | "Sonarr rejected the configured credentials; monitors paused" |
 
 **Event-specific fields:**
 
