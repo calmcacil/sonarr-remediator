@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
+	"github.com/calmcacil/sonarr-remediator/internal/recovery"
 	"github.com/calmcacil/sonarr-remediator/internal/safety"
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	"github.com/calmcacil/sonarr-remediator/internal/types"
@@ -33,7 +33,6 @@ type RetryScheduler struct {
 	logger     *slog.Logger
 	patterns   []*regexp.Regexp
 	intervals  []time.Duration
-	translator *sonarr.PathTranslator
 	baseCtx    context.Context
 	cancel     context.CancelFunc
 
@@ -67,7 +66,6 @@ func NewRetryScheduler(client *sonarr.Client, cfg *config.Config, engine *safety
 		logger:     logger,
 		patterns:   patterns,
 		intervals:  intervals,
-		translator: sonarr.NewPathTranslator(cfg.Paths.AgentRoot, cfg.Paths.SonarrRoot),
 		baseCtx:    ctx,
 		cancel:     cancel,
 		attempts:   make(map[string]*retryState),
@@ -134,9 +132,11 @@ func (r *RetryScheduler) Stop() {
 	}
 }
 
-// fire runs one retry attempt for key: re-verifies queue presence, re-checks
-// file existence, re-runs parse, and re-attempts the manual import
-// (SPEC §3.6).
+// fire runs one retry attempt for key: re-verifies queue presence, re-runs
+// Sonarr's manual-import preview, and re-attempts the manual import with
+// Sonarr's own quality, languages, and episode IDs (SPEC §3.6). The retry
+// proves the import by polling the queue until the item disappears, exactly
+// like the recovery pipeline (SPEC §3.2).
 func (r *RetryScheduler) fire(key string, item types.QueueItem) {
 	r.mu.Lock()
 	st, ok := r.attempts[key]
@@ -154,55 +154,74 @@ func (r *RetryScheduler) fire(key string, item types.QueueItem) {
 		return
 	}
 
-	// 2. Re-check file existence at the expected path (agent view).
-	agentPath := r.translator.ToAgent(item.OutputPath)
-	if _, err := os.Stat(agentPath); err != nil {
-		r.logger.Info("file still missing",
-			"event", "retry.file-missing",
+	// 2. Re-run Sonarr's manual-import preview. A preview error means the
+	// download is not importable right now (files missing, still processing);
+	// the retry is deferred rather than failed.
+	files, err := r.client.ManualImportPreview(r.baseCtx, item.DownloadID)
+	if err != nil {
+		r.logger.Warn("preview failed during retry",
+			"event", "retry.preview-failed",
 			"item", key,
 			"attempt", current,
-			"path", agentPath,
 			"error", err,
 		)
 		r.scheduleNext(key, item, current, true, err)
 		return
 	}
-
-	// 3. Re-run parse against Sonarr (sonarr view).
-	sonarrPath := r.translator.ToSonarr(agentPath)
-	parsed, err := r.client.Parse(r.baseCtx, sonarrPath)
-	if err != nil || parsed == nil || parsed.ParsedEpisodeInfo == nil {
-		r.logger.Warn("parse failed during retry",
-			"event", "retry.parse-failed",
+	file := recovery.SelectPreviewFile(files, item)
+	if file == nil {
+		r.logger.Info("no importable file during retry",
+			"event", "retry.no-importable-file",
 			"item", key,
 			"attempt", current,
-			"path", sonarrPath,
-			"error", err,
 		)
-		r.scheduleNext(key, item, current, true, err)
+		r.scheduleNext(key, item, current, true, nil)
 		return
 	}
 
-	// 4. Re-attempt the manual import.
+	// 3. Re-attempt the manual import.
 	if !r.cfg.Automation.RetryImports.Enabled {
 		r.clear(key, "retry imports disabled, cancelling retries")
 		return
+	}
+
+	episodeIDs := []int{item.EpisodeID}
+	if len(file.Episodes) > 0 {
+		episodeIDs = make([]int, 0, len(file.Episodes))
+		for _, ep := range file.Episodes {
+			episodeIDs = append(episodeIDs, ep.ID)
+		}
+	}
+	langs := file.Languages
+	if len(langs) == 0 {
+		langs = []types.LanguageModel{{Name: "Unknown"}}
 	}
 
 	cmd := types.ManualImportCommand{
 		Name:       "ManualImport",
 		ImportMode: "auto",
 		Files: []types.ManualImportCommandFile{{
-			Path:       sonarrPath,
+			Path:       file.Path,
 			SeriesID:   item.SeriesID,
-			EpisodeIDs: []int{item.EpisodeID},
-			Quality:    parsed.ParsedEpisodeInfo.Quality,
-			Languages:  []types.LanguageModel{parsed.ParsedEpisodeInfo.Language},
+			EpisodeIDs: episodeIDs,
+			Quality:    file.Quality,
+			Languages:  langs,
 			DownloadID: item.DownloadID,
 		}},
 	}
-	if err := r.client.ManualImportCommand(r.baseCtx, cmd); err != nil {
+	ok, err = recovery.SubmitAndWait(r.baseCtx, r.client, cmd, item, r.logger)
+	if err != nil {
+		r.logger.Info("retry failed, scheduling next",
+			"event", "retry.failed",
+			"item", key,
+			"attempt", current,
+			"error", err,
+		)
 		r.scheduleNext(key, item, current, false, err)
+		return
+	}
+	if !ok {
+		r.scheduleNext(key, item, current, false, nil)
 		return
 	}
 

@@ -23,7 +23,7 @@ This specification describes the complete implementation. No production testing 
 
 ## 1. Overview
 
-Sonarr Recovery Agent is a Go microservice that runs alongside Sonarr as a sidecar container. It autonomously detects, analyzes, and recovers from common download and import issues that normally require manual intervention.
+Sonarr Recovery Agent is a Go microservice that runs alongside Sonarr as a sidecar (container packaging: [DOCKER_SPEC.md](DOCKER_SPEC.md)). It autonomously detects, analyzes, and recovers from common download and import issues that normally require manual intervention.
 
 It is **not** a cleanup script. It is a continuous recovery agent that observes Sonarr's state, evaluates configurable safety checks, and acts only when it is confident an action is safe.
 
@@ -32,7 +32,7 @@ It is **not** a cleanup script. It is a continuous recovery agent that observes 
 | Property | Value |
 |---|---|
 | Language | Go (latest stable; currently 1.26) |
-| Runtime | Docker container |
+| Runtime | Long-running Go process — packaged as a Docker sidecar (see [DOCKER_SPEC.md](DOCKER_SPEC.md)) |
 | State | In-memory only (retries, decision ring buffer); all source data lives in Sonarr |
 | Configuration | YAML file + environment variable overrides with strict validation |
 | Observability | Structured JSON logs to stdout — the only output surface |
@@ -41,13 +41,18 @@ It is **not** a cleanup script. It is a continuous recovery agent that observes 
 
 ### Relationship with Sonarr
 
-The agent interacts **only** with Sonarr's API. It never communicates with download clients directly. When a queue item needs to be removed, the agent tells Sonarr to remove it; Sonarr forwards the removal to the download client if configured. File scanning for import recovery uses a shared volume mount (read-only).
+The agent interacts **only** with Sonarr's API. It never communicates with download clients directly. When a queue item needs to be removed, the agent tells Sonarr to remove it; Sonarr forwards the removal to the download client if configured. All recovery flows (import recovery, retries, reconciliation) run through Sonarr's manual-import preview and command endpoints, so the agent never reads the shared media filesystem; file paths are Sonarr's own.
 
 At startup, the agent detects the running Sonarr version by parsing `GET /api/v3/system/status` (e.g. `"version": "4.0.0.741"` → major version 4) and adapts API call behavior where minor differences exist (blocklist parameter naming, event type values).
 
 ### Path Translation
 
-The agent and Sonarr may run in different containers with different mount paths. The agent reads files via its own volume mount (`/data`); Sonarr's API endpoints (parse, manual import) expect paths as seen by Sonarr. The agent maps between the two using the configured `paths.downloadRoots` or paths discovered from Sonarr's download client configuration. All file paths sent to Sonarr's API must be translated to Sonarr's view of the filesystem.
+Legacy note: earlier versions of the agent scanned the shared media filesystem
+and translated paths between its own mount view and Sonarr's
+(`paths.agentRoot`/`paths.sonarrRoot`, `paths.downloadRoots`). Recovery is now
+filesystem-independent, and those configuration keys are parsed and validated
+for compatibility only — they no longer affect behavior. Sonarr's preview
+returns paths in Sonarr's own view, which are submitted unchanged.
 
 ---
 
@@ -238,44 +243,35 @@ For downloads where the download completed but Sonarr could not automatically ma
 - Folder name / file name mismatch
 - Unpacked output in unexpected subdirectories
 
-**Recovery workflow:**
+**Recovery workflow (filesystem-independent; works on Sonarr v3 and v4):**
 
 ```
 1. DETECT
    Queue item: trackedDownloadState = importFailed.
    History shows: eventType = downloadFailedImport.
 
-2. LOCATE FILES
-   Scan the download directory for candidate video files.
-   Extensions: .mkv, .mp4, .avi, .m4v, .mov, .wmv, .ts, .iso
-   Exclude: sample/, extras/, .nfo, .txt, .jpg, .png, .sfv, .par2
-   Walk depth: max 4 levels from download root.
+2. PREVIEW
+   GET /api/v3/manualimport?downloadId=…&filterExistingFiles=false
+   (Sonarr derives the folder from the tracked download, anchors the
+   series/episode match to the grab history, and reports the files it
+   could match with its own quality, languages, and episode IDs — the
+   same call the UI's manual-import dialog makes).
 
-3. PARSE
-   Send each candidate file path to Sonarr's parse endpoint.
-   Paths must be translated from the agent's container mount to
-   Sonarr's container mount before calling the API.
-   GET /api/v3/parse?path=/path/as/seen/by/sonarr/video.mkv
+3. SELECT
+   The file Sonarr matched to the expected episode; a single-file folder
+   is unambiguous and also accepted. Folders with several files and no
+   episode match are ambiguous → skip.
 
-4. MATCH
-   Cross-reference parsed result with the expected series/episode:
-   - Parsed series TVDB ID must match expected series TVDB ID (mismatch = skip)
-   - Parsed season must match expected season
-   - Parsed episode(s) must contain the expected episode
-
-5. EVALUATE CONFIDENCE (0-100)
-   If parse fails or TVDB ID mismatch → 0 (skip entirely).
-   Otherwise:
-   - TVDB ID match: +35
-   - Season matches expected season: +25
-   - Episode(s) contain expected episode: +25
-   - Quality recognized by Sonarr (parse returned non-zero quality ID): +10
-   - Language recognized by Sonarr (parse returned non-zero language ID): +5
-   Total: max 100
-
+4. SCORE CONFIDENCE (0-100)
+   - Sonarr matched episodes (series resolved): +35
+   - Any matched episode is in the expected season: +25
+   - Matched episodes contain the expected episode: +25
+   - Quality recognized (non-zero quality ID): +10
+   - Language recognized (non-empty languages): +5
+   Total: max 100. A file Sonarr could not match scores 0 (skip).
    Confidence breakdown is logged.
 
-6. PRE-IMPORT CHECK
+5. PRE-IMPORT CHECK
    a. Call GET /api/v3/episode/{episodeId} to check episode status.
    b. If episode hasFile == false → no existing file, proceed to import.
    c. If episode hasFile == true → call GET /api/v3/episodefile/{episodeFileId}
@@ -283,25 +279,29 @@ For downloads where the download completed but Sonarr could not automatically ma
    d. Compare qualities: if the existing file's quality weight is >= the candidate
       quality weight, reject (log and skip). Quality weights are obtained from
       the `QualityDefinition` list fetched at startup (higher weight = better).
-      The parse result's `QualityModel.ID` is matched to a `QualityDefinition`
+      The preview result's `QualityModel.ID` is matched to a `QualityDefinition`
       to get the weight. The existing file's quality is a name only; it is
       matched to a `QualityDefinition` by name to obtain a weight. If either
       lookup fails, compare by quality name as a fallback.
    e. For multi-episode files, check each episode individually. Skip episodes
       with equal or better files; import to remaining episodes.
 
-7. IMPORT (if confidence >= threshold)
+6. IMPORT (if confidence >= threshold)
    For each qualifying episode, call a ManualImport command (POST
    /api/v3/command); one episode per file. Request body includes:
    - name: "ManualImport", importMode: "auto"
-   - files[0].path (as seen by Sonarr's filesystem)
+   - files[0].path (as returned by Sonarr's preview — Sonarr's view)
    - files[0].seriesId, files[0].episodeIds (one entry per call)
-   - files[0].quality (from parse result), languages (from parse result)
+   - files[0].quality (from the preview), languages (from the preview)
    - files[0].downloadId (from queue item)
    Import mode is fixed to "auto"; Sonarr imports without a custom-format
    upgrade gate, matching the UI's Import button.
+   The import is proven by polling GET /api/v3/queue until the item's ID
+   disappears (bounded poll), never by the command's acknowledgement alone
+   — a surviving item means the import did not commit and is logged as such,
+   never as a success.
 
-8. LOG
+7. LOG
    Record action (or recommended action in dry-run) with full confidence breakdown.
 ```
 
@@ -309,6 +309,11 @@ For downloads where the download completed but Sonarr could not automatically ma
 
 - `confidence >= autoManualImport.minimumConfidence` (default 95): import automatically.
 - `confidence < minimumConfidence`: log confidence breakdown, skip.
+
+The pipeline needs no access to the shared media filesystem: every file path
+is Sonarr's own, and all matching is done by Sonarr. The `paths` configuration
+keys remain parsed and validated for compatibility but do not affect this
+workflow.
 
 ---
 
@@ -352,9 +357,11 @@ Re-queues imports that failed due to transient conditions.
 Default schedule: 5 min, 15 min, 30 min, 1 h, 2 h, 4 h (6 retries over ~8 hours).
 
 Each retry:
-1. Re-checks file existence at expected path.
-2. Re-runs parse against Sonarr.
-3. Re-attempts manual import.
+1. Re-checks that the item is still in the queue.
+2. Re-runs Sonarr's manual-import preview for the download; a preview error
+   (files not on disk, transient API failure) defers the retry.
+3. Re-attempts the manual import with Sonarr's own quality, languages, and
+   episode IDs, proving it via the queue poll (SPEC §3.2).
 4. After all retries exhausted, marks permanently failed and logs a `warn`-level `import.failed-all-retries` event (see §9).
 
 **Persistence:** In-memory only. If the agent restarts, pending retries are lost.
@@ -370,13 +377,13 @@ Every detected issue is checked against config-derived automation settings and t
 **Conflicting detectors:** When multiple detectors flag the same queue item, only the most conservative action is taken. The priority order (most conservative first):
 
 1. `log_only` (no mutation)
-2. `remove_queue` (stuck download, not custom format)
+2. `remove_queue` (stuck download, not custom format, torrent client error)
 3. `retry` (retry import)
 4. `manual_import` (import recovery)
 
 If two detectors propose the same action type, the one with the later `DetectedAt` timestamp is used. For each queue item, the queue monitor collects issues from both the built-in analysis (`buildIssue`) and all registered detectors, deduplicates by composite key (`seriesId:episodeId:downloadId`), and selects the highest-priority issue per poll cycle.
 
-**Residual file cleanup (samples, NFOs, empty folders, `_unpack` dirs) is explicitly out of scope.** The agent only acts through Sonarr's API; it never deletes files itself. Filesystem access is read-only (scanning for import recovery).
+**Residual file cleanup (samples, NFOs, empty folders, `_unpack` dirs) is explicitly out of scope.** The agent only acts through Sonarr's API; it never deletes files itself and never reads the media filesystem.
 
 ---
 
@@ -386,7 +393,7 @@ Global flag (`dryRun: true`) that disables all mutating API calls.
 
 **Behavior when enabled:**
 
-- Monitors run normally, including filesystem reads (scanning, path checks).
+- Monitors run normally, including Sonarr API reads (previews, queue polls).
 - Safety checks evaluate normally.
 - Every approved action is logged as `action.recommended` with the full decision record and the message phrased as "Would have ...".
 - No `POST`/`DELETE` requests are sent to Sonarr.
@@ -396,7 +403,66 @@ Global flag (`dryRun: true`) that disables all mutating API calls.
 
 ---
 
-### 3.9 Action Log
+### 3.9 Torrent Client Error Removal
+
+Downloads whose torrent client — qBittorrent itself or a qBit-compatible
+bridge such as torboxarr (which presents TorBox as a qBittorrent API to
+Sonarr) — reports a download error.
+
+**Detection signature (verified against live Sonarr v4):** qBit `state=error`
+is mapped by Sonarr v4 to queue `status="warning"` with
+`trackedDownloadStatus="warning"` and the localized
+`errorMessage` "qBittorrent is reporting an error" (or a matching status
+message). The item never leaves the queue on its own: Sonarr's failed-download
+handling only trips on `status=failed`, which qBit-bridge clients never
+report, and the item's synthetic client hash never matches the grabbed
+history, so even manual failure handling silently no-ops.
+
+**Trigger conditions:**
+
+| Condition | Detection |
+|---|---|
+| Tracked status | `trackedDownloadStatus` = `warning` |
+| Error text | `errorMessage` or status messages match the configured pattern (default `(?i)qBittorrent is reporting an error`) |
+| Age | >= `removeTorrentErrors.waitHours` (default 1 h) |
+
+The signature is owned by this rule: the stuck-download detector defers to it
+so the item is never double-handled.
+
+**Actions (in order):**
+
+1. Remove from queue (`DELETE /api/v3/queue/{id}?removeFromClient=true`).
+2. **Blocklist** (`blocklistRelease`, default true): locate the grabbed
+   history row by series/episode plus release title (the queue's downloadId
+   is a synthetic hash that never matches history, so it is not used) and
+   `POST /api/v3/history/failed/{historyId}` — the only working blocklist
+   path for these clients, because the queue DELETE `blocklist` parameter
+   silently no-ops when the hashes differ.
+3. **Redownload** (`redownload`, default true): the `history/failed` command
+   already triggers Sonarr's built-in redownload (`EpisodeSearchCommand`)
+   when `AutoRedownloadFailed` is enabled (the default). When nothing was
+   blocklisted (no history match, or blocklisting off), an explicit
+   `EpisodeSearch` command is issued so a different release is grabbed
+   instead of re-grabbing the same dead file.
+
+**Safety checks (see §7):**
+
+| Check | Expected |
+|---|---|
+| `rule.enabled` | `true` |
+| `queue.trackedDownloadStatus` | `warning` |
+| `error_message` | set |
+| `age_hours` | `>= waitHours` (1) |
+| `queue.trackedDownloadState` | `!= importing` |
+| `retry.scheduled` | `false` |
+
+The rule exists because plain removal alone re-grabs the same failed release
+(torboxarr even dedupes submissions by fingerprint, so the new grab can
+vanish into the dying job), creating an infinite loop.
+
+---
+
+### 3.10 Action Log
 
 The agent's only output surface. Every action produces exactly one structured log line:
 
@@ -488,11 +554,10 @@ sonarr-remediator/
 │   │   ├── queue.go             # Queue endpoint calls
 │   │   ├── history.go           # History endpoint calls
 │   │   ├── manual_import.go     # Manual import calls
-│   │   ├── parse.go             # Parse endpoint calls (with path translation)
 │   │   ├── system.go            # System status, health, version
 │   │   ├── quality.go           # Quality definitions (fetched at startup)
 │   │   ├── language.go          # Language definitions (fetched at startup)
-│   │   └── extras.go            # Download client discovery, episode file helper
+│   │   └── extras.go            # Episode/file/series helpers
 │   ├── monitors/
 │   │   ├── queue_monitor.go     # Queue polling, diffing, issue dedup by priority
 │   │   └── health_monitor.go    # Sonarr connectivity
@@ -502,8 +567,7 @@ sonarr-remediator/
 │   │   ├── not_custom_format.go # "Not custom format upgrade" detection
 │   │   └── import_recovery.go   # Failed import recovery detection
 │   ├── recovery/
-│   │   ├── import.go            # File scanning, parse, confidence, import
-│   │   └── scanner.go           # Directory walking & file matching
+│   │   └── import.go            # Preview-based import recovery, reconcile import, import proving
 │   ├── safety/
 │   │   ├── engine.go            # Safety gates + global constraints + decision log
 │   │   └── engine_test.go
@@ -521,7 +585,8 @@ sonarr-remediator/
 ├── go.sum
 ├── Makefile
 ├── README.md
-└── SPEC.md
+├── SPEC.md
+└── DOCKER_SPEC.md
 ```
 
 ---
@@ -1034,9 +1099,9 @@ monitoring:
 # ─── File System ───
 paths:
   downloadRoots: []
-  # If empty, fetched from Sonarr's download client configuration at startup.
-  # If the agent container's mount path differs from Sonarr's, provide explicit mappings.
-  agentRoot: ""     # The root path as seen by the agent container (e.g., /data)
+  # Legacy: recovery is filesystem-independent (SPEC §3.4) and these keys are
+  # parsed and validated for compatibility only; they no longer affect behavior.
+  agentRoot: ""     # The root path as seen by the agent (e.g., /data)
   sonarrRoot: ""    # The root path as seen by Sonarr (e.g., /data)
 
 # ─── Exclusion ───
@@ -1061,6 +1126,13 @@ automation:
     errorConditions:
       - missing_files
       - abandoned
+
+  removeTorrentErrors:
+    enabled: true
+    waitHours: 1
+    errorMessagePattern: "" # default: "(?i)qBittorrent is reporting an error"
+    blocklistRelease: true
+    redownload: true
 
   retryImports:
     enabled: true
@@ -1104,7 +1176,11 @@ dryRun: true
 
 ### Path Translation
 
-When `paths.agentRoot` and `paths.sonarrRoot` are both set, the agent translates paths before sending them to Sonarr's API. For example, if the agent sees `/data/downloads/movie.mkv` and `agentRoot=/data`, `sonarrRoot=/data`, the path sent to Sonarr is `/data/downloads/movie.mkv` (unchanged when roots match). If roots differ, the prefix is swapped.
+Legacy: the recovery and retry pipelines are filesystem-independent and never
+translate paths — Sonarr's manual-import preview returns paths in Sonarr's
+own view, submitted unchanged (SPEC §1 "Path Translation"). The
+`paths.agentRoot`/`paths.sonarrRoot` keys are parsed and validated for
+compatibility only.
 
 ### Environment Variable Overrides
 
@@ -1143,7 +1219,7 @@ The agent must fail fast with clear errors for:
 
 ### Logging
 
-Structured JSON logs to stdout (Docker-native), implemented with the standard library `log/slog`.
+Structured JSON logs to stdout (container-native; consumed via `docker logs`, DOCKER_SPEC.md §1), implemented with the standard library `log/slog`.
 
 - Levels: `debug`, `info`, `warn`, `error`.
 - Standard fields: `timestamp`, `level`, `component`, `message`.
@@ -1177,7 +1253,7 @@ Every approved action produces exactly one action event line. Routine detections
 | Layer | Coverage Target | Focus |
 |---|---|---|
 | `internal/safety/` | 95%+ | Gate evaluation, global constraints, decision log |
-| `internal/recovery/` | 90%+ | Confidence scoring (TVDB-gate), file matching, parse interpretation |
+| `internal/recovery/` | 90%+ | Confidence scoring (Sonarr match), preview selection, import proving |
 | `internal/config/` | 90%+ | Config loading, env overrides, validation |
 | `internal/detectors/` | 85%+ | Issue detection with mocked Sonarr data |
 | `internal/executor/` | 85%+ | Action dispatch, dry-run, error handling |
@@ -1191,9 +1267,9 @@ Every approved action produces exactly one action event line. Routine detections
 1. Stuck download detected → safety check passes → removal (or dry-run skip).
 2. "Not a Custom Format Upgrade" detected via queue message → removal.
 3. "Not a Custom Format Upgrade" detected via history event → removal.
-4. Failed import → TVDB match → high confidence → auto-import.
-5. Failed import → TVDB mismatch → confidence 0 → skip.
-6. Failed import → TVDB match → medium confidence → log-only with breakdown.
+4. Failed import → preview match → high confidence → auto-import.
+5. Failed import → no Sonarr match → confidence 0 → skip.
+6. Failed import → Sonarr match → medium confidence → log-only with breakdown.
 7. Failed import → transient error → retry schedule → recovery on retry N.
 8. Failed import → all retries exhausted → `import.failed-all-retries` log event emitted.
 9. Multi-episode file → import via multiple ManualImport commands (one episode per command).
@@ -1204,9 +1280,8 @@ Every approved action produces exactly one action event line. Routine detections
 14. Exclusion list (seriesId) match → item skipped entirely.
 15. Exclusion list (rootPath prefix) match → item skipped entirely.
 16. Two same-episode targeted hits with `dryRun=false` → winner imported (ManualImport command via POST /api/v3/command, queue item cleared), discard removed (`DELETE /api/v3/queue/{id}?removeFromClient=true`), winner never deleted, `reconcile.plan` logged.
-17. Failed-import recovery against a **v4** mock (parse `path=` answers 204) → no import, no mutation — the honest no-op the live API produces.
+17. Failed-import recovery against a **v4** mock → the preview flow imports normally (v4 serves the manual-import preview; the removed parse pipeline is what 204'd on `path=`).
 18. `POST /api/v3/manualimport` (reprocess) is evaluate-only → rejection verdict, tracked download stays in the queue, nothing imported.
-16. Path translation: agent path correctly mapped to Sonarr path.
 
 ### Test Fixtures
 
@@ -1216,49 +1291,10 @@ Real anonymized Sonarr API responses stored as JSON fixtures.
 
 ## 11. Deployment
 
-### Docker
-
-```dockerfile
-FROM golang:1.26-alpine AS builder
-WORKDIR /build
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sonarr-remediator ./cmd/sonarr-remediator
-
-FROM alpine:3.21
-RUN apk --no-cache add ca-certificates tzdata
-COPY --from=builder /sonarr-remediator /usr/local/bin/sonarr-remediator
-USER 1000:1000
-ENTRYPOINT ["sonarr-remediator"]
-CMD ["--config", "/config/config.yaml"]
-```
-
-No ports are exposed. Logs are the only interface; view them with `docker logs`.
-
-### Docker Compose (with Sonarr)
-
-```yaml
-services:
-  sonarr:
-    image: linuxserver/sonarr:latest
-    volumes:
-      - ./sonarr/config:/config
-      - ./data:/data
-
-  sonarr-remediator:
-    image: ghcr.io/calmcacil/sonarr-remediator:latest
-    volumes:
-      - ./data:/data:ro
-      - ./remediator-config:/config
-    environment:
-      - SRA_SONARR__URL=http://sonarr:8989
-      - SRA_SONARR__API_KEY=${SONARR_API_KEY}
-      - SRA_DRY_RUN=true
-    depends_on:
-      - sonarr
-    stop_grace_period: 30s
-```
+Container packaging — image build, runtime contract, Compose composition,
+healthcheck, image tags, and update/rollback — is specified in
+[DOCKER_SPEC.md](DOCKER_SPEC.md). This section covers only the process
+behavior that deployment relies on.
 
 ### Graceful Shutdown
 
@@ -1269,7 +1305,8 @@ On receiving `SIGTERM` or `SIGINT`:
 3. Flush decision log ring buffer to stdout.
 4. Exit with code 0.
 
-`stop_grace_period` should be at least 30 seconds. A second signal causes immediate exit.
+`stop_grace_period` must be at least 30 seconds (DOCKER_SPEC.md §8). A second
+signal causes immediate exit.
 
 ---
 
@@ -1311,16 +1348,12 @@ The agent uses the Sonarr v3 API (used by both Sonarr v3 and v4 installations). 
   imports**. The dev-test mock models this faithfully so a regression to
   this endpoint fails tests (verdict, no import, queue unchanged).
 
-### Parse
-- `GET /api/v3/parse` — Parse a file path or title. Param: `path` or `title`.
-  **Version-dependent**: v4 answers HTTP 204 No Content to `path=` even for
-  files already in the library (verified against prod) and parses only
-  `title=` (whose response has no `series` object and empty `episodes`); v3
-  parses `path=` normally. The failed-import recovery pipeline (§3.4) and
-  import retries (§3.6) are v3-targeted and not exercised against v4; the
-  reconciliation path (§3.2) never calls parse, using the manual-import
-  preview instead. Reworking §3.4 onto the preview flow is a known
-  follow-up.
+The failed-import recovery (§3.4) and import retries (§3.6) run entirely on
+the manual-import preview + command flow above, which Sonarr v3 and v4 both
+serve normally. The agent no longer calls the parse endpoint (`GET
+/api/v3/parse`), which v4 answers with 204 No Content to `path=` calls
+(verified against prod) and v3 answers normally — the historical
+parse-based recovery pipeline is removed.
 
 ### Queue
 - `GET /api/v3/queue` — Paged envelope (`{page, pageSize, totalRecords,

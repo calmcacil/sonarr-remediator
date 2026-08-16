@@ -26,6 +26,13 @@ func Defaults() *Config {
 				WaitHours:       6,
 				ErrorConditions: []string{"missing_files", "abandoned"},
 			},
+			RemoveTorrentErrors: RemoveTorrentErrorsConfig{
+				Enabled:             true,
+				WaitHours:           1,
+				ErrorMessagePattern: "(?i)qBittorrent is reporting an error",
+				BlocklistRelease:    true,
+				Redownload:          true,
+			},
 			RetryImports: RetryImportsConfig{
 				Enabled: true,
 				RetryIntervals: []Duration{

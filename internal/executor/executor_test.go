@@ -1,6 +1,6 @@
 // Tests for the action executor (SPEC §5.5, §3.8): dispatch, dry-run,
-// blocklisting, manual import scheduling/recovery, and download-root
-// discovery. Sonarr is mocked with an httptest server.
+// blocklisting, manual import scheduling/recovery. Sonarr is mocked with an
+// httptest server.
 package executor
 
 import (
@@ -11,10 +11,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,21 +40,19 @@ type mockSonarr struct {
 	queueItems           []types.QueueItem
 	queueStatus          int
 	deleteStatus         int
-	parseResp            *types.ParseResult
-	parseStatus          int
 	commandStatus        int
 	keepInQueue          bool // POST /api/v3/command does not clear the item
 	manualImportPreview  []types.ManualImportFile
-	downloadClients      []types.DownloadClientResource
-	downloadClientStatus int
+	previewErr           bool // GET /api/v3/manualimport answers 500 (files not on disk)
+	history              []types.HistoryItem
+	historyFailedPosts   []int // history ids POSTed to /api/v3/history/failed/{id}
 	series               map[int]types.SeriesResource
 	episodes             map[int]types.EpisodeResource
 	episodeFiles         map[int]types.EpisodeFileResource
 
-	requests   []string // "METHOD path?query" for every request
-	parseCalls []string // paths sent to /api/v3/parse
+	requests     []string // "METHOD path?query" for every request
 	previewCalls []string // downloadIds sent to GET /api/v3/manualimport
-	commands   []map[string]any
+	commands     []map[string]any
 }
 
 func newMockSonarr(t *testing.T) *mockSonarr {
@@ -64,9 +61,7 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 		version:              "4.0.0.741",
 		queueStatus:          http.StatusOK,
 		deleteStatus:         http.StatusOK,
-		parseStatus:          http.StatusOK,
 		commandStatus:        http.StatusOK,
-		downloadClientStatus: http.StatusOK,
 		series:               make(map[int]types.SeriesResource),
 		episodes:             make(map[int]types.EpisodeResource),
 		episodeFiles:         make(map[int]types.EpisodeFileResource),
@@ -120,19 +115,24 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 		m.mu.Unlock()
 		writeJSON(w, status, nil)
 	})
-	mux.HandleFunc("GET /api/v3/parse", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v3/history", func(w http.ResponseWriter, r *http.Request) {
 		m.record(r)
 		m.mu.Lock()
-		m.parseCalls = append(m.parseCalls, r.URL.Query().Get("path"))
-		status, resp, version := m.parseStatus, m.parseResp, m.version
+		items := m.history
 		m.mu.Unlock()
-		if strings.HasPrefix(version, "4") && r.URL.Query().Get("path") != "" {
-			// Live v4 answers 204 No Content to path= parse calls; only
-			// title= parses on v4. v3 parses path= normally.
-			w.WriteHeader(http.StatusNoContent)
+		writeJSON(w, http.StatusOK, types.Page[types.HistoryItem]{Page: 1, PageSize: len(items), TotalRecords: len(items), Records: items})
+	})
+	mux.HandleFunc("POST /api/v3/history/failed/{id}", func(w http.ResponseWriter, r *http.Request) {
+		m.record(r)
+		id, err := strconv.Atoi(r.PathValue("id"))
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, status, resp)
+		m.mu.Lock()
+		m.historyFailedPosts = append(m.historyFailedPosts, id)
+		m.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("GET /api/v3/manualimport", func(w http.ResponseWriter, r *http.Request) {
 		m.record(r)
@@ -140,6 +140,7 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 		m.mu.Lock()
 		m.previewCalls = append(m.previewCalls, dl)
 		resp := m.manualImportPreview
+		errResp := m.previewErr
 		known := false
 		for _, it := range m.queueItems {
 			if it.DownloadID != "" && it.DownloadID == dl {
@@ -148,8 +149,9 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 			}
 		}
 		m.mu.Unlock()
-		if dl == "" {
-			// Live throws on the empty downloadId (empty path).
+		if dl == "" || errResp {
+			// Live throws on the empty downloadId (empty path) and 500s for
+			// a known downloadId whose files are not on disk yet.
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -192,13 +194,6 @@ func newMockSonarr(t *testing.T) *mockSonarr {
 			status = http.StatusCreated
 		}
 		writeJSON(w, status, map[string]any{"name": "ManualImport", "status": "started"})
-	})
-	mux.HandleFunc("GET /api/v3/downloadclient", func(w http.ResponseWriter, r *http.Request) {
-		m.record(r)
-		m.mu.Lock()
-		status, clients := m.downloadClientStatus, m.downloadClients
-		m.mu.Unlock()
-		writeJSON(w, status, clients)
 	})
 	mux.HandleFunc("GET /api/v3/series/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.record(r)
@@ -283,6 +278,17 @@ func (m *mockSonarr) setQueueItems(items []types.QueueItem) {
 	m.queueItems = items
 	m.mu.Unlock()
 }
+func (m *mockSonarr) setHistory(items []types.HistoryItem) {
+	m.mu.Lock()
+	m.history = items
+	m.mu.Unlock()
+}
+func (m *mockSonarr) historyFailedIDs(t *testing.T) []int {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.historyFailedPosts)
+}
 func (m *mockSonarr) setQueueStatus(code int) {
 	m.mu.Lock()
 	m.queueStatus = code
@@ -291,16 +297,6 @@ func (m *mockSonarr) setQueueStatus(code int) {
 func (m *mockSonarr) setDeleteStatus(code int) {
 	m.mu.Lock()
 	m.deleteStatus = code
-	m.mu.Unlock()
-}
-func (m *mockSonarr) setParseResp(resp *types.ParseResult) {
-	m.mu.Lock()
-	m.parseResp = resp
-	m.mu.Unlock()
-}
-func (m *mockSonarr) setParseStatus(code int) {
-	m.mu.Lock()
-	m.parseStatus = code
 	m.mu.Unlock()
 }
 func (m *mockSonarr) setCommandStatus(code int) {
@@ -318,16 +314,12 @@ func (m *mockSonarr) setPreviewResp(resp []types.ManualImportFile) {
 	m.manualImportPreview = resp
 	m.mu.Unlock()
 }
-func (m *mockSonarr) setDownloadClients(clients []types.DownloadClientResource) {
+func (m *mockSonarr) setPreviewErr(v bool) {
 	m.mu.Lock()
-	m.downloadClients = clients
+	m.previewErr = v
 	m.mu.Unlock()
 }
-func (m *mockSonarr) setDownloadClientStatus(code int) {
-	m.mu.Lock()
-	m.downloadClientStatus = code
-	m.mu.Unlock()
-}
+
 func (m *mockSonarr) setSeries(s types.SeriesResource) {
 	m.mu.Lock()
 	m.series[s.ID] = s
@@ -379,11 +371,6 @@ func (m *mockSonarr) commandBody(i int) map[string]any {
 		return nil
 	}
 	return m.commands[i]
-}
-func (m *mockSonarr) parseCallCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.parseCalls)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -459,20 +446,18 @@ func detectVersion(t *testing.T, c *sonarr.Client) {
 	}
 }
 
-// goodParse is a parse result that fully matches series 12345 episode 1x01
-// (confidence 100), used by recovery and retry tests.
-func goodParse() *types.ParseResult {
-	return &types.ParseResult{
-		Title: "Show.Name.S01E01.720p",
-		ParsedEpisodeInfo: &types.ParsedEpisodeInfo{
-			SeasonNumber:   1,
-			EpisodeNumbers: []int{1},
-			Quality:        types.QualityModel{Quality: types.Quality{ID: 4, Name: "HDTV-720p"}},
-			Language:       types.LanguageModel{ID: 1, Name: "English"},
-		},
-		Series:   &types.SeriesInfo{TVDBID: 12345},
-		Episodes: []types.EpisodeLookup{{ID: 10, SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot"}},
-	}
+// goodPreview is a manual-import preview file that fully matches series
+// 12345 episode 1x01 (confidence 100), used by recovery and retry tests.
+func goodPreview() []types.ManualImportFile {
+	season := 1
+	return []types.ManualImportFile{{
+		Path:         "/data/downloads/Show.Name.S01E01.720p.mkv",
+		Name:         "Show.Name.S01E01.720p.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 4, Name: "HDTV-720p"}},
+		Languages:    []types.LanguageModel{{ID: 1, Name: "English"}},
+		SeasonNumber: &season,
+		Episodes:     []types.EpisodeLookup{{ID: 10, SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot"}},
+	}}
 }
 
 // ─── log inspection helpers ────────────────────────────────────────────
@@ -786,17 +771,8 @@ func TestExecuteManualImportRetryableSchedules(t *testing.T) {
 }
 
 func TestExecuteManualImportNonRetryableRecovers(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "Show.Name.S01E01.720p.mkv")
-	if err := os.WriteFile(file, []byte("fake video"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
 	m := newMockSonarr(t)
-	m.setVersion("3.0.0.900") // §3.4 parses path= like the v3 API
-	m.setSeries(types.SeriesResource{ID: 1, Title: "Show", TVDBID: 12345})
 	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 1, SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot"})
-	m.setParseResp(goodParse())
 
 	cfg := executorTestConfig()
 	cfg.Automation.AutoManualImport.Enabled = true
@@ -810,7 +786,9 @@ func TestExecuteManualImportNonRetryableRecovers(t *testing.T) {
 	ex := New(client, cfg, sched, logger)
 
 	item := types.QueueItem{ID: 3, SeriesID: 1, EpisodeID: 10, DownloadID: "hash-abc",
-		OutputPath: dir, ErrorMessage: "checksum mismatch for the downloaded file"}
+		ErrorMessage: "checksum mismatch for the downloaded file"}
+	m.setQueueItems([]types.QueueItem{item})
+	m.setPreviewResp(goodPreview())
 	dec := testDecision(types.ActionManualImport, true, false, item)
 	dec.Issue.Type = types.IssueImportFailed
 
@@ -830,7 +808,7 @@ func TestExecuteManualImportNonRetryableRecovers(t *testing.T) {
 	}
 	file0, _ := files[0].(map[string]any)
 	for key, want := range map[string]any{
-		"path":       file,
+		"path":       goodPreview()[0].Path,
 		"seriesId":   float64(1),
 		"downloadId": "hash-abc",
 	} {
@@ -850,10 +828,7 @@ func TestExecuteManualImportNonRetryableRecovers(t *testing.T) {
 }
 
 func TestExecuteManualImportNoCandidateFiles(t *testing.T) {
-	dir := t.TempDir() // empty: no candidate video files
-
 	m := newMockSonarr(t)
-	m.setSeries(types.SeriesResource{ID: 1, Title: "Show", TVDBID: 12345})
 	m.setEpisode(types.EpisodeResource{ID: 10, SeriesID: 1, SeasonNumber: 1, EpisodeNumber: 1, Title: "Pilot"})
 
 	cfg := executorTestConfig()
@@ -868,7 +843,10 @@ func TestExecuteManualImportNoCandidateFiles(t *testing.T) {
 	ex := New(client, cfg, sched, logger)
 
 	item := types.QueueItem{ID: 3, SeriesID: 1, EpisodeID: 10, DownloadID: "hash-abc",
-		OutputPath: dir, ErrorMessage: "checksum mismatch for the downloaded file"}
+		ErrorMessage: "checksum mismatch for the downloaded file"}
+	m.setQueueItems([]types.QueueItem{item})
+	m.setPreviewResp(nil) // nothing Sonarr can import
+
 	dec := testDecision(types.ActionManualImport, true, false, item)
 	dec.Issue.Type = types.IssueImportFailed
 
@@ -877,9 +855,6 @@ func TestExecuteManualImportNoCandidateFiles(t *testing.T) {
 	}
 	if n := m.commandCount(); n != 0 {
 		t.Fatalf("manual imports = %d, want 0 (no candidates)", n)
-	}
-	if n := m.parseCallCount(); n != 0 {
-		t.Fatalf("parse calls = %d, want 0 (nothing to scan)", n)
 	}
 	if !logHasMsg(buf, "no candidate matched") {
 		t.Fatalf("expected recovery skip log; logs:\n%s", buf.String())
@@ -954,59 +929,174 @@ func TestExecuteRetryAction(t *testing.T) {
 	})
 }
 
-// ─── Executor construction: download root discovery ────────────────────
+// ─── Execute: torrent client error removal (SPEC §3.9) ────────────────
 
-func TestNewUsesConfiguredRoots(t *testing.T) {
-	m := newMockSonarr(t)
-	cfg := executorTestConfig() // DownloadRoots = ["/downloads"]
-	logger, _ := newTestLogger(t)
-	ex := New(m.client(t), cfg, nil, logger)
-
-	if !reflect.DeepEqual(ex.roots, []string{"/downloads"}) {
-		t.Fatalf("roots = %v, want configured roots", ex.roots)
-	}
-	if n := m.requestCount(); n != 0 {
-		t.Fatalf("no discovery call expected with configured roots, got %d: %v", n, m.requestURIs())
-	}
-}
-
-func TestNewDiscoversDownloadRoots(t *testing.T) {
-	m := newMockSonarr(t)
-	m.setDownloadClients([]types.DownloadClientResource{
-		{ID: 1, Name: "qb", Fields: []types.DownloadClientField{
-			{Name: "downloadFolder", Value: "/downloads/qb"},
-			{Name: "other", Value: "/ignored"},
-		}},
-		{ID: 2, Name: "nzb", Fields: []types.DownloadClientField{
-			{Name: "tvDownloadFolder", Value: "/downloads/qb"}, // duplicate, dropped
-			{Name: "downloadFolder", Value: "  /downloads/usenet  "},
-		}},
-	})
-
-	cfg := executorTestConfig()
-	cfg.Paths.DownloadRoots = nil
-	logger, _ := newTestLogger(t)
-	ex := New(m.client(t), cfg, nil, logger)
-
-	want := []string{"/downloads/qb", "/downloads/usenet"}
-	if !reflect.DeepEqual(ex.roots, want) {
-		t.Fatalf("roots = %v, want %v", ex.roots, want)
+func torrentErrorItem() types.QueueItem {
+	return types.QueueItem{
+		ID:                    77,
+		SeriesID:              1,
+		EpisodeID:             10,
+		Title:                 "Show.Name.S01E01.720p.WEB-DL",
+		Status:                "warning",
+		TrackedDownloadStatus: "warning",
+		ErrorMessage:          "qBittorrent is reporting an error",
+		DownloadID:            "SyntheticHash123",
 	}
 }
 
-func TestNewDownloadRootsDiscoveryFailure(t *testing.T) {
-	m := newMockSonarr(t)
-	m.setDownloadClientStatus(http.StatusBadRequest)
+func torrentErrorDecision(dryRun bool) types.Decision {
+	dec := testDecision(types.ActionRemoveQueue, true, dryRun, torrentErrorItem())
+	dec.Issue.Type = types.IssueTorrentError
+	return dec
+}
 
-	cfg := executorTestConfig()
-	cfg.Paths.DownloadRoots = nil
+// commandNames returns the names of every POST /api/v3/command body.
+func (m *mockSonarr) commandNames(t *testing.T) []string {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var names []string
+	for _, c := range m.commands {
+		if name, ok := c["name"].(string); ok {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// TestExecuteRemoveTorrentErrorBlocklists: removal + history/failed
+// blocklist; no explicit search (Sonarr's own redownload follows the failed
+// mark).
+func TestExecuteRemoveTorrentErrorBlocklists(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setQueueItems([]types.QueueItem{torrentErrorItem()})
+	cfg := executorTestConfig() // defaults: blocklistRelease=true, redownload=true
+	m.setHistory([]types.HistoryItem{{
+		ID:          55,
+		SeriesID:    1,
+		EpisodeID:   10,
+		EventType:   "grabbed",
+		SourceTitle: "Show.Name.S01E01.720p.WEB-DL",
+	}})
 	logger, buf := newTestLogger(t)
 	ex := New(m.client(t), cfg, nil, logger)
 
-	if len(ex.roots) != 0 {
-		t.Fatalf("roots = %v, want empty on discovery failure", ex.roots)
+	if err := ex.Execute(context.Background(), torrentErrorDecision(false)); err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	findMsg(t, buf, "failed to discover download roots")
+	if got := m.deleteURIs(); len(got) != 1 || got[0] != "DELETE /api/v3/queue/77" {
+		t.Fatalf("delete requests = %v, want exactly the queue removal", got)
+	}
+	if ids := m.historyFailedIDs(t); !slices.Equal(ids, []int{55}) {
+		t.Fatalf("history/failed posts = %v, want [55]", ids)
+	}
+	if names := m.commandNames(t); len(names) != 0 {
+		t.Fatalf("no EpisodeSearch expected after a blocklist, got commands %v", names)
+	}
+	if !logHasMsg(buf, "blocklisted release via history 55") {
+		t.Fatalf("expected blocklist log; logs:\n%s", buf.String())
+	}
+}
+
+// TestExecuteRemoveTorrentErrorNoHistorySearches: no grabbed history found —
+// the release cannot be blocklisted, so an explicit EpisodeSearch replaces
+// it.
+func TestExecuteRemoveTorrentErrorNoHistorySearches(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setQueueItems([]types.QueueItem{torrentErrorItem()})
+	cfg := executorTestConfig()
+	m.setHistory(nil) // no grabbed history for this release
+	logger, buf := newTestLogger(t)
+	ex := New(m.client(t), cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), torrentErrorDecision(false)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got := m.deleteURIs(); len(got) != 1 {
+		t.Fatalf("delete requests = %v, want exactly the queue removal", got)
+	}
+	if ids := m.historyFailedIDs(t); len(ids) != 0 {
+		t.Fatalf("history/failed posts = %v, want none (no history match)", ids)
+	}
+	if names := m.commandNames(t); !slices.Equal(names, []string{"EpisodeSearch"}) {
+		t.Fatalf("commands = %v, want [EpisodeSearch]", names)
+	}
+	if !logHasMsg(buf, "triggered episode search for replacement") {
+		t.Fatalf("expected search log; logs:\n%s", buf.String())
+	}
+}
+
+// TestExecuteRemoveTorrentErrorBlocklistDisabled: blocklisting off — plain
+// removal plus an explicit replacement search.
+func TestExecuteRemoveTorrentErrorBlocklistDisabled(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setQueueItems([]types.QueueItem{torrentErrorItem()})
+	cfg := executorTestConfig()
+	cfg.Automation.RemoveTorrentErrors.BlocklistRelease = false
+	m.setHistory([]types.HistoryItem{{
+		ID:          55,
+		SeriesID:    1,
+		EpisodeID:   10,
+		EventType:   "grabbed",
+		SourceTitle: "Show.Name.S01E01.720p.WEB-DL",
+	}})
+	logger, _ := newTestLogger(t)
+	ex := New(m.client(t), cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), torrentErrorDecision(false)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if ids := m.historyFailedIDs(t); len(ids) != 0 {
+		t.Fatalf("history/failed posts = %v, want none (blocklisting off)", ids)
+	}
+	if names := m.commandNames(t); !slices.Equal(names, []string{"EpisodeSearch"}) {
+		t.Fatalf("commands = %v, want [EpisodeSearch]", names)
+	}
+}
+
+// TestExecuteRemoveTorrentErrorDryRun: dry-run logs the intended removal with
+// its blocklist/redownload flags and mutates nothing.
+func TestExecuteRemoveTorrentErrorDryRun(t *testing.T) {
+	m := newMockSonarr(t)
+	cfg := executorTestConfig()
+	logger, buf := newTestLogger(t)
+	ex := New(m.client(t), cfg, nil, logger)
+
+	if err := ex.Execute(context.Background(), torrentErrorDecision(true)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if n := m.requestCount(); n != 0 {
+		t.Fatalf("dry-run must not call Sonarr, got %d requests", n)
+	}
+	line := findEvent(t, buf, "action.recommended")
+	if got := msgOf(line); !strings.Contains(got, "torrent client error") {
+		t.Fatalf("message = %q, want torrent-error dry-run phrasing", got)
+	}
+	if dry, _ := line["dry_run"].(bool); !dry {
+		t.Fatal("dry_run = false, want true")
+	}
+}
+
+// TestExecuteRemoveTorrentErrorDeleteFailure: the removal fails — no
+// blocklist, no search, error surfaced.
+func TestExecuteRemoveTorrentErrorDeleteFailure(t *testing.T) {
+	m := newMockSonarr(t)
+	m.setDeleteStatus(http.StatusBadRequest)
+	cfg := executorTestConfig()
+	m.setHistory([]types.HistoryItem{{ID: 55, SeriesID: 1, EpisodeID: 10, EventType: "grabbed", SourceTitle: "x"}})
+	logger, _ := newTestLogger(t)
+	ex := New(m.client(t), cfg, nil, logger)
+
+	err := ex.Execute(context.Background(), torrentErrorDecision(false))
+	if err == nil {
+		t.Fatal("Execute returned nil, want error when the removal fails")
+	}
+	if ids := m.historyFailedIDs(t); len(ids) != 0 {
+		t.Fatalf("history/failed posts = %v, want none after a failed removal", ids)
+	}
+	if names := m.commandNames(t); len(names) != 0 {
+		t.Fatalf("no search expected after a failed removal, got %v", names)
+	}
 }
 
 // ─── decision helpers ──────────────────────────────────────────────────

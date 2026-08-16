@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
@@ -13,31 +11,35 @@ import (
 	"github.com/calmcacil/sonarr-remediator/internal/types"
 )
 
-// candidate holds one parsed candidate file and its confidence evaluation
-// (SPEC §3.4 steps 3-5).
+// candidate holds one previewed file and its confidence evaluation
+// (SPEC §3.4 steps 3-5). Matching is Sonarr's job: the preview
+// (GET /api/v3/manualimport, anchored to the tracked download) reports the
+// files Sonarr could match and its own quality, languages, and episode IDs.
 type candidate struct {
-	agentPath  string // path as seen by the agent (scanned)
-	sonarrPath string // path as seen by Sonarr (used for parse and import)
-	parsed     *types.ParseResult
-	episodes   []int // episode IDs to import (from the parse result or fallback)
+	sonarrPath string
+	episodes   []int // episode IDs to import (from the preview or fallback)
 	confidence int
 	tvdb       bool
 	season     bool
 	episode    bool
-	quality    bool
+	qualityOK  bool
 	language   bool
+	quality    types.QualityModel
+	languages  []types.LanguageModel
 }
 
-// Recover implements SPEC §3.4 steps 2-8 for one failed-import queue item:
-// locate candidate video files in the download folder, parse and match them
-// against the expected series and episode, score confidence, and auto-import
-// qualifying episodes. Detection (step 1) is performed by the caller; history
-// is carried for context and not consumed here. Recover performs real API
-// calls; dry-run handling is the caller's responsibility.
-func Recover(ctx context.Context, client *sonarr.Client, cfg *config.Config, translator *sonarr.PathTranslator, roots []string, item types.QueueItem, history []types.HistoryItem, logger *slog.Logger) error {
+// Recover implements SPEC §3.4 for one failed-import queue item: preview the
+// tracked download through Sonarr's manual-import endpoint, select the file
+// Sonarr matched to the expected episode, score confidence, and auto-import
+// qualifying episodes. Detection (step 1) is performed by the caller.
+// Recover performs real API calls; dry-run handling is the caller's
+// responsibility.
+//
+// The flow is filesystem-independent and version-agnostic: the preview works
+// on both Sonarr v3 and v4 (SPEC §12), unlike the parse-based pipeline it
+// replaced, which v4 answers with 204 No Content to path= parse calls.
+func Recover(ctx context.Context, client *sonarr.Client, cfg *config.Config, item types.QueueItem, logger *slog.Logger) error {
 	logger = logger.With("component", "recovery", "item", item.CompositeKey())
-
-	best := scanCandidates(ctx, client, translator, roots, item, logger)
 
 	// Step 5: automation gate.
 	if !cfg.Automation.AutoManualImport.Enabled {
@@ -45,75 +47,37 @@ func Recover(ctx context.Context, client *sonarr.Client, cfg *config.Config, tra
 		return nil
 	}
 
-	// Step 6: confidence gate (SPEC §3.5).
-	if best == nil {
+	// Step 2-4: preview the download; Sonarr performs parsing and matching.
+	files, err := client.ManualImportPreview(ctx, item.DownloadID)
+	if err != nil {
+		logger.Error("failed to preview download folder", "error", err)
+		return err
+	}
+	file := SelectPreviewFile(files, item)
+	if file == nil {
 		logger.Info("no candidate matched the expected series and episode")
 		return nil
 	}
-	if best.confidence < cfg.Automation.AutoManualImport.MinimumConfidence {
+
+	// Step 5: confidence gate (SPEC §3.5).
+	c, err := evaluatePreview(ctx, client, file, item, logger)
+	if err != nil {
+		return err
+	}
+	if c.confidence < cfg.Automation.AutoManualImport.MinimumConfidence {
 		logger.Info("confidence below auto-import threshold; skipping import",
-			"confidence", best.confidence,
+			"confidence", c.confidence,
 			"minimum_confidence", cfg.Automation.AutoManualImport.MinimumConfidence)
 		return nil
 	}
 
 	// Steps 7-8: pre-import check per episode, then import qualifying episodes.
-	_, err := importEpisodes(ctx, client, item, best, false, logger)
+	_, err = importEpisodes(ctx, client, item, c, false, logger)
 	return err
 }
 
-// scanCandidates performs Recover steps 1-4 (SPEC §3.4): derive the
-// download folder, fetch the expected series and episode, and scan, parse,
-// match, and score every candidate video file. It returns the
-// highest-confidence candidate, or nil when there is nothing to scan, the
-// expected series or episode cannot be fetched, or no candidate matched.
-func scanCandidates(ctx context.Context, client *sonarr.Client, translator *sonarr.PathTranslator, roots []string, item types.QueueItem, logger *slog.Logger) *candidate {
-	// Steps 1-2: derive the download folder (agent view) from the queue item.
-	dirs := candidateDirs(item, translator, roots)
-	if len(dirs) == 0 {
-		logger.Info("no download folder for item; skipping import recovery")
-		return nil
-	}
-
-	// Expected series: TVDB ID gate (SPEC §3.4 step 4), fetched once.
-	series, err := client.GetSeries(ctx, item.SeriesID)
-	if err != nil {
-		logger.Warn("failed to fetch expected series; aborting import recovery",
-			"series_id", item.SeriesID, "error", err)
-		return nil
-	}
-
-	// Expected episode: supplies the season and episode number to match.
-	expectedEp, err := client.GetEpisode(ctx, item.EpisodeID)
-	if err != nil {
-		logger.Warn("failed to fetch expected episode; aborting import recovery",
-			"episode_id", item.EpisodeID, "error", err)
-		return nil
-	}
-
-	// Steps 2-4: scan, parse, match, and score every candidate.
-	var best *candidate
-	for _, dir := range dirs {
-		files, err := Scan(dir)
-		if err != nil {
-			logger.Error("failed to scan download folder", "path", dir, "error", err)
-			continue
-		}
-		for _, file := range files {
-			c := evaluateCandidate(ctx, client, translator, series, expectedEp, item, file, logger)
-			if c == nil {
-				continue // parse failure or TVDB mismatch: confidence 0, skipped
-			}
-			if best == nil || c.confidence > best.confidence {
-				best = c
-			}
-		}
-	}
-	return best
-}
-
-// importPollTimeout bounds how long ReconcileImport waits for Sonarr to
-// import the submitted file and clear the queue item. Overridden in tests.
+// importPollTimeout bounds how long an import is expected to clear the queue
+// item. Overridden in tests.
 var importPollTimeout = 60 * time.Second
 
 // importPollInterval is the interval between queue checks while waiting for
@@ -145,7 +109,7 @@ func ReconcileImport(ctx context.Context, client *sonarr.Client, item types.Queu
 		logger.Error("failed to preview download folder", "error", err)
 		return false, err
 	}
-	file := selectPreviewFile(files, item)
+	file := SelectPreviewFile(files, item)
 	if file == nil {
 		logger.Info("no importable file in the download folder; reconciliation import skipped")
 		return false, nil
@@ -176,13 +140,33 @@ func ReconcileImport(ctx context.Context, client *sonarr.Client, item types.Queu
 			DownloadID: item.DownloadID,
 		}},
 	}
-	if err := client.ManualImportCommand(ctx, cmd); err != nil {
+	ok, err := SubmitAndWait(ctx, client, cmd, item, logger)
+	if err != nil {
 		logger.Error("manual import command failed", "candidate_path", file.Path, "error", err)
 		return false, err
 	}
+	if !ok {
+		logger.Warn("manual import did not clear the queue item within the poll window",
+			"candidate_path", file.Path, "queue_item", item.ID)
+		return false, nil
+	}
+	logger.Info("auto-imported "+file.Path,
+		"candidate_path", file.Path, "episodes", episodeIDs,
+		"action", string(types.ActionManualImport))
+	return true, nil
+}
 
-	// The command runs asynchronously; the import is proven when the queue
-	// item disappears (a completed import removes the tracked download).
+// SubmitAndWait posts a ManualImport command and proves the import by
+// polling the queue until the item's ID disappears (Sonarr removes a tracked
+// download once its import completes), bounded by importPollTimeout. It
+// returns true only when the import committed; a non-2xx command response or
+// an item that survives the poll window reports false, so callers never log
+// a successful import that did not occur (SPEC §3.2).
+func SubmitAndWait(ctx context.Context, client *sonarr.Client, cmd types.ManualImportCommand, item types.QueueItem, logger *slog.Logger) (bool, error) {
+	if err := client.ManualImportCommand(ctx, cmd); err != nil {
+		return false, err
+	}
+
 	deadline := time.Now().Add(importPollTimeout)
 	for {
 		items, err := client.GetQueue(ctx)
@@ -198,14 +182,9 @@ func ReconcileImport(ctx context.Context, client *sonarr.Client, item types.Queu
 			}
 		}
 		if !present {
-			logger.Info("auto-imported "+file.Path,
-				"candidate_path", file.Path, "episodes", episodeIDs,
-				"action", string(types.ActionManualImport))
 			return true, nil
 		}
 		if time.Now().After(deadline) {
-			logger.Warn("manual import did not clear the queue item within the poll window",
-				"candidate_path", file.Path, "queue_item", item.ID)
 			return false, nil
 		}
 		select {
@@ -216,11 +195,11 @@ func ReconcileImport(ctx context.Context, client *sonarr.Client, item types.Queu
 	}
 }
 
-// selectPreviewFile picks the file to import from Sonarr's manual-import
+// SelectPreviewFile picks the file to import from Sonarr's manual-import
 // preview. The preferred file is the one Sonarr matched to the queue item's
 // episode; a single-file folder is unambiguous and also accepted. Folders
 // with several files and no episode match are ambiguous and yield nil.
-func selectPreviewFile(files []types.ManualImportFile, item types.QueueItem) *types.ManualImportFile {
+func SelectPreviewFile(files []types.ManualImportFile, item types.QueueItem) *types.ManualImportFile {
 	if len(files) == 0 {
 		return nil
 	}
@@ -237,117 +216,78 @@ func selectPreviewFile(files []types.ManualImportFile, item types.QueueItem) *ty
 	return nil
 }
 
-// candidateDirs returns the directories to scan for a queue item (SPEC §3.4
-// step 2). The download folder is the queue item's OutputPath translated to
-// the agent's view; an empty OutputPath yields nothing to scan. When the
-// folder sits under one of the configured download roots the folder itself
-// is scanned; when it does not (or no roots are configured) the translated
-// output path is scanned directly. Both cases resolve to the same directory,
-// so a single entry is returned.
-func candidateDirs(item types.QueueItem, translator *sonarr.PathTranslator, roots []string) []string {
-	if item.OutputPath == "" {
-		return nil
+// evaluatePreview scores a previewed file against the expected episode
+// (SPEC §3.4 steps 3-5). Sonarr's own match is the source of truth: a file
+// with matched episodes means Sonarr resolved the series and episode (tvdb +
+// season + episode); quality and language are recognized when Sonarr
+// reported non-zero values. The confidence breakdown is logged for every
+// candidate.
+func evaluatePreview(ctx context.Context, client *sonarr.Client, file *types.ManualImportFile, item types.QueueItem, logger *slog.Logger) (*candidate, error) {
+	expectedEp, err := client.GetEpisode(ctx, item.EpisodeID)
+	if err != nil {
+		logger.Warn("failed to fetch expected episode; aborting import recovery",
+			"episode_id", item.EpisodeID, "error", err)
+		return nil, err
 	}
-	dir := translator.ToAgent(item.OutputPath)
-	for _, root := range roots {
-		if pathWithin(root, dir) {
-			return []string{dir}
+
+	c := &candidate{
+		sonarrPath: file.Path,
+		quality:    file.Quality,
+		languages:  file.Languages,
+		episodes:   previewEpisodes(file, expectedEp.SeasonNumber, item.EpisodeID),
+	}
+
+	// TVDB/series match: Sonarr matched the file to episodes of the series.
+	if len(file.Episodes) > 0 {
+		c.tvdb = true
+		c.confidence += 35
+	}
+
+	// Season match: any matched episode is in the expected season.
+	for _, ep := range file.Episodes {
+		if ep.SeasonNumber == expectedEp.SeasonNumber {
+			c.season = true
+			c.confidence += 25
+			break
 		}
 	}
-	return []string{dir}
-}
 
-// pathWithin reports whether p equals base or is nested inside it.
-func pathWithin(base, p string) bool {
-	base = filepath.Clean(base)
-	p = filepath.Clean(p)
-	if p == base {
-		return true
-	}
-	return strings.HasPrefix(p, base+string(filepath.Separator))
-}
-
-// evaluateCandidate parses one file via Sonarr, matches it against the
-// expected series and episode, and scores its confidence (SPEC §3.4 steps
-// 3-5). It returns nil when the parse fails or the TVDB ID mismatches
-// (confidence 0, candidate skipped). The confidence breakdown is logged for
-// every candidate.
-func evaluateCandidate(ctx context.Context, client *sonarr.Client, translator *sonarr.PathTranslator, series *types.SeriesResource, expectedEp *types.EpisodeResource, item types.QueueItem, agentPath string, logger *slog.Logger) *candidate {
-	sonarrPath := translator.ToSonarr(agentPath)
-	parsed, err := client.Parse(ctx, sonarrPath)
-	if err != nil {
-		logger.Error("failed to parse candidate", "candidate_path", agentPath, "error", err)
-		return nil
-	}
-
-	// Parse failure (no parsed info or no series match) or TVDB ID mismatch:
-	// confidence 0, candidate skipped (SPEC §3.4 step 5).
-	if parsed.ParsedEpisodeInfo == nil || parsed.Series == nil || parsed.Series.TVDBID != series.TVDBID {
-		logger.Info("confidence breakdown",
-			"confidence", 0, "tvdb", false, "season", false,
-			"episode", false, "quality", false, "language", false,
-			"candidate_path", agentPath)
-		return nil
-	}
-
-	info := parsed.ParsedEpisodeInfo
-	c := &candidate{agentPath: agentPath, sonarrPath: sonarrPath, parsed: parsed}
-
-	// TVDB ID match: +35.
-	c.tvdb = true
-	c.confidence += 35
-
-	// Season match: +25.
-	if info.SeasonNumber == expectedEp.SeasonNumber {
-		c.season = true
-		c.confidence += 25
-	}
-
-	// Parsed episode numbers contain the expected episode: +25.
-	if containsEpisode(info.EpisodeNumbers, expectedEp.EpisodeNumber) {
-		c.episode = true
-		c.confidence += 25
+	// Episode match: the matched episodes contain the expected episode.
+	for _, ep := range file.Episodes {
+		if ep.ID == item.EpisodeID {
+			c.episode = true
+			c.confidence += 25
+			break
+		}
 	}
 
 	// Quality recognized by Sonarr: +10.
-	if info.Quality.Quality.ID != 0 {
-		c.quality = true
+	if file.Quality.Quality.ID != 0 {
+		c.qualityOK = true
 		c.confidence += 10
 	}
 
 	// Language recognized by Sonarr: +5.
-	if info.Language.ID != 0 {
+	if len(file.Languages) > 0 {
 		c.language = true
 		c.confidence += 5
 	}
 
-	c.episodes = candidateEpisodes(parsed, expectedEp.SeasonNumber, item.EpisodeID)
-
 	logger.Info("confidence breakdown",
 		"confidence", c.confidence, "tvdb", c.tvdb, "season", c.season,
 		"episode", c.episode, "quality", c.quality, "language", c.language,
-		"candidate_path", agentPath)
-	return c
+		"candidate_path", file.Path)
+	return c, nil
 }
 
-// containsEpisode reports whether n appears in numbers.
-func containsEpisode(numbers []int, n int) bool {
-	for _, v := range numbers {
-		if v == n {
-			return true
-		}
-	}
-	return false
-}
-
-// candidateEpisodes returns the episode IDs to consider for a candidate
-// (SPEC §3.4 step 6): the episodes Sonarr matched in the parse result,
-// restricted to the expected season and deduplicated; when the parse result
-// carries no usable episode list, the queue item's episode ID is used.
-func candidateEpisodes(parsed *types.ParseResult, expectedSeason, fallbackID int) []int {
+// previewEpisodes returns the episode IDs to consider for a candidate
+// (SPEC §3.4 step 6): the episodes Sonarr matched in the preview, restricted
+// to the expected season and deduplicated; when the preview carries no
+// usable episode list, the queue item's episode ID is used.
+func previewEpisodes(file *types.ManualImportFile, expectedSeason, fallbackID int) []int {
 	var ids []int
 	seen := make(map[int]bool)
-	for _, ep := range parsed.Episodes {
+	for _, ep := range file.Episodes {
 		if ep.ID == 0 || ep.SeasonNumber != expectedSeason || seen[ep.ID] {
 			continue
 		}
@@ -373,7 +313,7 @@ func importEpisodes(ctx context.Context, client *sonarr.Client, item types.Queue
 	attempted, succeeded := 0, 0
 	for _, episodeID := range c.episodes {
 		if !force {
-			qualifies, err := episodeQualifies(ctx, client, episodeID, c.parsed.ParsedEpisodeInfo.Quality, logger)
+			qualifies, err := episodeQualifies(ctx, client, episodeID, c.quality, logger)
 			if err != nil {
 				// Pre-import check failed: skip this episode, keep going.
 				continue
@@ -383,9 +323,9 @@ func importEpisodes(ctx context.Context, client *sonarr.Client, item types.Queue
 			}
 		}
 		attempted++
-		langs := c.parsed.ParsedEpisodeInfo.Languages
+		langs := c.languages
 		if len(langs) == 0 {
-			langs = []types.LanguageModel{c.parsed.ParsedEpisodeInfo.Language}
+			langs = []types.LanguageModel{{Name: "Unknown"}}
 		}
 		cmd := types.ManualImportCommand{
 			Name:       "ManualImport",
@@ -394,15 +334,22 @@ func importEpisodes(ctx context.Context, client *sonarr.Client, item types.Queue
 				Path:       c.sonarrPath,
 				SeriesID:   item.SeriesID,
 				EpisodeIDs: []int{episodeID},
-				Quality:    c.parsed.ParsedEpisodeInfo.Quality,
+				Quality:    c.quality,
 				Languages:  langs,
 				DownloadID: item.DownloadID,
 			}},
 		}
-		if err := client.ManualImportCommand(ctx, cmd); err != nil {
+		ok, err := SubmitAndWait(ctx, client, cmd, item, logger)
+		if err != nil {
 			lastErr = err
 			logger.Error("manual import failed",
-				"candidate_path", c.agentPath, "episode", episodeID, "error", err)
+				"candidate_path", c.sonarrPath, "episode", episodeID, "error", err)
+			continue
+		}
+		if !ok {
+			logger.Info("manual import did not clear the queue item; import not reported as taken",
+				"candidate_path", c.sonarrPath, "episode", episodeID,
+				"action", string(types.ActionManualImport))
 			continue
 		}
 		succeeded++

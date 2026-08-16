@@ -174,6 +174,16 @@ func (e *Engine) gatesFor(issue types.Issue) []types.CheckResult {
 			{Check: "queue.trackedDownloadState", Expected: "!= importing", Actual: item.TrackedDownloadState, Passed: item.TrackedDownloadState != "importing"},
 			e.retryCheck(key),
 		}
+	case types.IssueTorrentError:
+		rule := e.cfg.Automation.RemoveTorrentErrors
+		return []types.CheckResult{
+			{Check: "rule.enabled", Expected: "true", Actual: strconv.FormatBool(rule.Enabled), Passed: rule.Enabled},
+			{Check: "queue.trackedDownloadStatus", Expected: "warning", Actual: item.TrackedDownloadStatus, Passed: item.TrackedDownloadStatus == "warning"},
+			{Check: "error_message", Expected: "set", Actual: strconv.FormatBool(item.ErrorMessage != ""), Passed: item.ErrorMessage != ""},
+			e.ageCheck(item, rule.WaitHours),
+			{Check: "queue.trackedDownloadState", Expected: "!= importing", Actual: item.TrackedDownloadState, Passed: item.TrackedDownloadState != "importing"},
+			e.retryCheck(key),
+		}
 	case types.IssueImportFailed:
 		autoImport := e.cfg.Automation.AutoManualImport.Enabled
 		retryImports := e.cfg.Automation.RetryImports.Enabled

@@ -39,6 +39,14 @@ func (d *StuckDownloadDetector) Detect(ctx context.Context, item types.QueueItem
 		return nil, nil
 	}
 
+	// The torrent-client error signature is owned by the torrent_error
+	// detector (§3.9): the stuck-download trigger would otherwise flag the
+	// same item, and the torrent-error removal carries blocklist/re-search
+	// semantics the generic removal lacks.
+	if defaultTorrentErrorRE != nil && IsTorrentErrorSignature(item, defaultTorrentErrorRE) {
+		return nil, nil
+	}
+
 	messages := extractAllMessages(item)
 	now := time.Now()
 

@@ -37,3 +37,13 @@ func (c *Client) ManualImportPreview(ctx context.Context, downloadID string) ([]
 func (c *Client) ManualImportCommand(ctx context.Context, cmd types.ManualImportCommand) error {
 	return c.do(ctx, http.MethodPost, "/api/v3/command", nil, cmd, nil)
 }
+
+// EpisodeSearch triggers an EpisodeSearch command (POST /api/v3/command) for
+// the given episodes — the same command Sonarr itself issues when a download
+// fails, searching for a replacement release regardless of the missing-file
+// state (SPEC §3.9). Used as the redownload fallback when no grabbed history
+// item could be blocklisted.
+func (c *Client) EpisodeSearch(ctx context.Context, episodeIDs []int) error {
+	cmd := map[string]any{"name": "EpisodeSearch", "episodeIds": episodeIDs}
+	return c.do(ctx, http.MethodPost, "/api/v3/command", nil, cmd, nil)
+}

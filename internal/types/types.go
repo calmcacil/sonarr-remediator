@@ -165,37 +165,9 @@ type LanguageModel struct {
 	Name string `json:"name"`
 }
 
-// ─── Parse ───────────────────────────────────────────────────────────
+// ─── Manual Import ───────────────────────────────────────────────────
 
-// ParseResult is the response of GET /api/v3/parse.
-type ParseResult struct {
-	Title             string             `json:"title"`
-	ParsedEpisodeInfo *ParsedEpisodeInfo `json:"parsedEpisodeInfo"`
-	Series            *SeriesInfo        `json:"series"`
-	Episodes          []EpisodeLookup    `json:"episodes"`
-}
-
-// ParsedEpisodeInfo is the parsed metadata inside a ParseResult.
-type ParsedEpisodeInfo struct {
-	ReleaseTitle           string          `json:"releaseTitle"`
-	SeriesTitle            string          `json:"seriesTitle"`
-	SeasonNumber           int             `json:"seasonNumber"`
-	EpisodeNumbers         []int           `json:"episodeNumbers"`
-	AbsoluteEpisodeNumbers []int           `json:"absoluteEpisodeNumbers"`
-	FullSeason             bool            `json:"fullSeason"`
-	Quality                QualityModel    `json:"quality"`
-	Language               LanguageModel   `json:"language"` // Sonarr v3 form; v4 serves languages (plural)
-	Languages              []LanguageModel `json:"languages"`
-}
-
-// SeriesInfo is the matched series inside a ParseResult.
-type SeriesInfo struct {
-	Title  string `json:"title"`
-	TVDBID int    `json:"tvdbId"`
-	ImdbID string `json:"imdbId"`
-}
-
-// EpisodeLookup is one episode in the parsed result's episodes array.
+// EpisodeLookup is one episode in the manual-import preview's episodes array.
 type EpisodeLookup struct {
 	ID            int    `json:"id"`
 	EpisodeNumber int    `json:"episodeNumber"`
@@ -380,6 +352,7 @@ type IssueType string
 const (
 	IssueStuckDownload   IssueType = "stuck_download"
 	IssueNotCustomFormat IssueType = "not_custom_format_upgrade"
+	IssueTorrentError    IssueType = "torrent_client_error"
 	IssueImportFailed    IssueType = "import_failed"
 	IssueReconcile       IssueType = "reconcile"
 )
@@ -407,9 +380,7 @@ type Issue struct {
 // ActionTypeFor maps an issue type to its default action.
 func (i Issue) ActionTypeFor() ActionType {
 	switch i.Type {
-	case IssueStuckDownload:
-		return ActionRemoveQueue
-	case IssueNotCustomFormat:
+	case IssueStuckDownload, IssueNotCustomFormat, IssueTorrentError:
 		return ActionRemoveQueue
 	case IssueImportFailed:
 		return ActionManualImport
@@ -427,6 +398,8 @@ func (t IssueType) Priority() int {
 	case IssueStuckDownload:
 		return 2
 	case IssueNotCustomFormat:
+		return 2
+	case IssueTorrentError:
 		return 2
 	case IssueReconcile:
 		return 2

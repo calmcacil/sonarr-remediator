@@ -9,45 +9,6 @@ import (
 	"github.com/calmcacil/sonarr-remediator/internal/types"
 )
 
-// GetDownloadClients returns the configured download clients
-// (GET /api/v3/downloadclient).
-func (c *Client) GetDownloadClients(ctx context.Context) ([]types.DownloadClientResource, error) {
-	var clients []types.DownloadClientResource
-	if err := c.do(ctx, http.MethodGet, "/api/v3/downloadclient", nil, nil, &clients); err != nil {
-		return nil, err
-	}
-	return clients, nil
-}
-
-// DownloadRoots discovers download root folders from the download clients'
-// "downloadFolder" and "tvDownloadFolder" fields (SPEC §12). Empty values are
-// dropped and duplicates are removed, preserving order.
-func (c *Client) DownloadRoots(ctx context.Context) ([]string, error) {
-	clients, err := c.GetDownloadClients(ctx)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{})
-	var roots []string
-	for _, dc := range clients {
-		for _, f := range dc.Fields {
-			if f.Name != "downloadFolder" && f.Name != "tvDownloadFolder" {
-				continue
-			}
-			v := strings.TrimSpace(string(f.Value))
-			if v == "" {
-				continue
-			}
-			if _, ok := seen[v]; ok {
-				continue
-			}
-			seen[v] = struct{}{}
-			roots = append(roots, v)
-		}
-	}
-	return roots, nil
-}
-
 // GetEpisode returns one episode (GET /api/v3/episode/{id}).
 func (c *Client) GetEpisode(ctx context.Context, episodeID int) (*types.EpisodeResource, error) {
 	var ep types.EpisodeResource

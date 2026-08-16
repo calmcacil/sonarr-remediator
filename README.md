@@ -19,11 +19,13 @@ detects and evaluates issues but never mutates anything; every action it
 ## Quick start (Docker Compose)
 
 1. Copy `docker-compose.example.yaml` and adjust the volumes for your setup.
-2. Create the config directory and copy the example config:
+2. Create the config directory, copy the example config, and make it
+   readable by the runtime user (`PUID`/`PGID`, default 1000:1000):
 
    ```
    mkdir -p remediator-config
    cp config.example.yaml remediator-config/config.yaml
+   chown -R "${PUID:-1000}:${PGID:-1000}" remediator-config
    ```
 
 3. Set the Sonarr API key, either in the environment (`SONARR_API_KEY`) or
@@ -31,7 +33,9 @@ detects and evaluates issues but never mutates anything; every action it
 4. Start: `docker compose up -d`
 
 The container mounts the shared media directory read-only at `/data` and the
-config directory at `/config`.
+config directory read-only at `/config`. The whole container runs read-only;
+`--healthcheck` verifies configuration and Sonarr connectivity (`docker ps`
+shows the container's health).
 
 ## Configuration
 
@@ -54,5 +58,5 @@ builds the container image.
 
 ## Reference
 
-See [SPEC.md](SPEC.md) for the full architecture, configuration schema, and
-deployment details.
+- [SPEC.md](SPEC.md) — application behavior: detection, safety checks, actions, configuration schema, action log.
+- [DOCKER_SPEC.md](DOCKER_SPEC.md) — container packaging, Compose deployment, image tags, and lifecycle.

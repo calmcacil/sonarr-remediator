@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -99,6 +98,7 @@ func newPipeline(t *testing.T, m *MockSonarr, cfg *config.Config) *pipeline {
 	dets := []detectors.Detector{
 		detectors.NewStuckDownloadDetector(cfg, logger),
 		detectors.NewNotCustomFormatDetector(cfg, logger),
+		detectors.NewTorrentErrorDetector(cfg, logger),
 		detectors.NewImportRecoveryDetector(cfg, logger),
 	}
 	return &pipeline{cfg: cfg, client: client, engine: engine, retry: retry, exec: exec, dets: dets, logs: logs}
@@ -393,63 +393,56 @@ func expectedEpisode() types.EpisodeResource {
 	}
 }
 
-// parseResult builds a GET /api/v3/parse response for the expected series and
-// season. qualityID/languageID of 0 disable those confidence components.
-func parseResult(tvdbID int, epNumbers []int, episodes []types.EpisodeLookup, qualityID, languageID int) *types.ParseResult {
-	return &types.ParseResult{
-		Title: "Test.Show.S01E05.720p.WEB-DL",
-		ParsedEpisodeInfo: &types.ParsedEpisodeInfo{
-			ReleaseTitle:   "Test.Show.S01E05.720p.WEB-DL",
-			SeriesTitle:    "Test Show",
-			SeasonNumber:   1,
-			EpisodeNumbers: epNumbers,
-			Quality: types.QualityModel{
-				Quality:  types.Quality{ID: qualityID, Name: "HDTV-720p"},
-				Revision: types.Revision{Version: 1},
-			},
-			Language: types.LanguageModel{ID: languageID, Name: "English"},
-		},
-		Series:   &types.SeriesInfo{Title: "Test Show", TVDBID: tvdbID},
-		Episodes: episodes,
+// previewFile builds a GET /api/v3/manualimport preview file. qualityID 0
+// disables the quality confidence component; episodes nil disables the
+// tvdb/season/episode components (Sonarr could not match the file).
+func previewFile(qualityID int, episodes []types.EpisodeLookup) types.ManualImportFile {
+	season := 1
+	f := types.ManualImportFile{
+		Path:         "/data/downloads/Test.Show.S01E05.720p.WEB-DL.mkv",
+		Name:         "Test.Show.S01E05.720p.WEB-DL.mkv",
+		Quality:      types.QualityModel{Quality: types.Quality{ID: qualityID, Name: "HDTV-720p"}},
+		Languages:    []types.LanguageModel{{ID: 1, Name: "English"}},
+		SeasonNumber: &season,
+		Episodes:     episodes,
 	}
+	if qualityID == 0 {
+		f.Quality = types.QualityModel{}
+		f.Languages = nil // unknown language, too: confidence 35+25+25 = 85
+	}
+	return f
 }
 
-// singleEpisodeParse is the shared single-episode parse fixture: full
+// singleEpisodePreview is the shared single-episode preview fixture: full
 // confidence (100) for the expected episode.
-func singleEpisodeParse(tvdbID int, qualityID, languageID int) *types.ParseResult {
-	return parseResult(tvdbID, []int{5},
-		[]types.EpisodeLookup{{ID: 500, EpisodeNumber: 5, SeasonNumber: 1}},
-		qualityID, languageID)
+func singleEpisodePreview(qualityID int) types.ManualImportFile {
+	return previewFile(qualityID,
+		[]types.EpisodeLookup{{ID: testEpisodeID, EpisodeNumber: 5, SeasonNumber: 1}})
 }
 
 // setupImportMock configures the shared Sonarr data for import-recovery
-// scenarios (series, expected episode, definitions, parse result) and creates
-// a real candidate video file in a fresh temp download folder. It returns the
-// download folder path (the agent's view).
-func setupImportMock(t *testing.T, m *MockSonarr, pr *types.ParseResult) string {
+// scenarios (series, expected episode, definitions, preview files) and
+// registers the preview as the response for the item's downloadId. The
+// preview file's matched episodes are registered as file-less so the
+// pre-import gate can fetch them (the mock 404s unknown ids, like live).
+func setupImportMock(t *testing.T, m *MockSonarr, files ...types.ManualImportFile) {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "Test.Show.S01E05.720p.mkv"), []byte("fake video"), 0o644); err != nil {
-		t.Fatalf("write candidate file: %v", err)
-	}
 	m.SetSeries(testSeriesID, types.SeriesResource{ID: testSeriesID, Title: "Test Show", TVDBID: testTVDBID, Path: "/tv/test-show"})
 	m.SetEpisode(testEpisodeID, expectedEpisode())
-	// The pre-import quality gate (SPEC §3.4 step 6d) fetches each parse
-	// result episode; register them as file-less so the mock serves them
-	// (it 404s unknown ids, like live).
-	for _, ep := range pr.Episodes {
-		m.SetEpisode(ep.ID, types.EpisodeResource{
-			ID:            ep.ID,
-			SeriesID:      testSeriesID,
-			SeasonNumber:  ep.SeasonNumber,
-			EpisodeNumber: ep.EpisodeNumber,
-			HasFile:       false,
-		})
+	for _, f := range files {
+		for _, ep := range f.Episodes {
+			m.SetEpisode(ep.ID, types.EpisodeResource{
+				ID:            ep.ID,
+				SeriesID:      testSeriesID,
+				SeasonNumber:  ep.SeasonNumber,
+				EpisodeNumber: ep.EpisodeNumber,
+				HasFile:       false,
+			})
+		}
 	}
 	m.SetQualityDefinitions(qualityDefinitions()...)
 	m.SetLanguages(types.Language{ID: 1, Name: "English"})
-	m.SetParseResult(pr)
-	return dir
+	m.SetManualImportPreview(files...)
 }
 
 // ─── Scenario 1: stuck download → removal ─────────────────────────────
@@ -540,14 +533,14 @@ func TestScenarioNotCustomFormatHistoryEvent(t *testing.T) {
 func TestScenarioImportRecoveryHighConfidence(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
-	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 3, 1))
+	setupImportMock(t, m, singleEpisodePreview(3))
 	p := newPipeline(t, m, cfg)
-	item := importFailedItem(423, dir, "")
+	item := importFailedItem(423, "", "")
+	m.SetQueue(item)
 
 	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec)
@@ -557,12 +550,11 @@ func TestScenarioImportRecoveryHighConfidence(t *testing.T) {
 		t.Fatalf("expected POST /api/v3/command, got %s %s", post.Method, post.Path)
 	}
 	req := importCommandBody(t, post)
-	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != 500 {
-		t.Fatalf("expected manual import for episode 500, got %+v", req.Files)
+	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != testEpisodeID {
+		t.Fatalf("expected manual import for episode %d, got %+v", testEpisodeID, req.Files)
 	}
-	wantPath := filepath.Join(dir, "Test.Show.S01E05.720p.mkv")
-	if req.Files[0].Path != wantPath {
-		t.Fatalf("expected import path %q, got %q", wantPath, req.Files[0].Path)
+	if req.Files[0].Path != singleEpisodePreview(3).Path {
+		t.Fatalf("expected import path %q, got %q", singleEpisodePreview(3).Path, req.Files[0].Path)
 	}
 	if req.Files[0].DownloadID != item.DownloadID {
 		t.Fatalf("expected downloadId %q, got %q", item.DownloadID, req.Files[0].DownloadID)
@@ -579,19 +571,22 @@ func TestScenarioImportRecoveryHighConfidence(t *testing.T) {
 	}
 }
 
-// ─── Scenario 5: failed import, TVDB mismatch → confidence 0, skip ────
+// ─── Scenario 5: failed import, no Sonarr match → confidence 0, skip ──
 
-func TestScenarioImportRecoveryTVDBSMismatch(t *testing.T) {
+func TestScenarioImportRecoveryUnmatchedFile(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
-	dir := setupImportMock(t, m, singleEpisodeParse(9999, 3, 1)) // TVDB ID mismatch
+	// Sonarr could not match the file to any episode: the preview carries no
+	// episodes (and, with qualityID 0, no quality/language either), so the
+	// file scores 0 and is never imported.
+	setupImportMock(t, m, previewFile(0, nil))
 	p := newPipeline(t, m, cfg)
-	item := importFailedItem(425, dir, "")
+	item := importFailedItem(425, "", "")
+	m.SetQueue(item)
 
 	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec) // the engine approves; recovery itself skips
@@ -603,10 +598,10 @@ func TestScenarioImportRecoveryTVDBSMismatch(t *testing.T) {
 		if msg, _ := rec["msg"].(string); msg == "confidence breakdown" {
 			breakdown = true
 			if conf, _ := rec["confidence"].(float64); conf != 0 {
-				t.Fatalf("expected confidence 0 on TVDB mismatch, got %v", rec["confidence"])
+				t.Fatalf("expected confidence 0 without a Sonarr match, got %v", rec["confidence"])
 			}
 			if tvdb, _ := rec["tvdb"].(bool); tvdb {
-				t.Fatal("expected tvdb=false in breakdown on TVDB mismatch")
+				t.Fatal("expected tvdb=false in breakdown without a Sonarr match")
 			}
 		}
 	}
@@ -615,21 +610,22 @@ func TestScenarioImportRecoveryTVDBSMismatch(t *testing.T) {
 	}
 }
 
-// ─── Scenario 6: TVDB match, medium confidence → log-only, no import ──
+// ─── Scenario 6: Sonarr match, medium confidence → log-only, no import ──
 
 func TestScenarioImportRecoveryMediumConfidence(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 	cfg.Automation.AutoManualImport.MinimumConfidence = 95
 
-	// Quality (0) and language (0) unknown: 35 + 25 + 25 = 85 < 95.
-	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 0, 0))
+	// Quality (0) and language unknown: 35 + 25 + 25 = 85 < 95.
+	setupImportMock(t, m, previewFile(0,
+		[]types.EpisodeLookup{{ID: testEpisodeID, EpisodeNumber: 5, SeasonNumber: 1}}))
 	p := newPipeline(t, m, cfg)
-	item := importFailedItem(426, dir, "")
+	item := importFailedItem(426, "", "")
+	m.SetQueue(item)
 
 	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec)
@@ -655,7 +651,6 @@ func TestScenarioImportRecoveryMediumConfidence(t *testing.T) {
 func TestScenarioRetryRecoversOnLaterAttempt(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	// Short intervals so the retry fires without real timers in the test.
@@ -664,18 +659,17 @@ func TestScenarioRetryRecoversOnLaterAttempt(t *testing.T) {
 		config.Duration(200 * time.Millisecond),
 	}
 
-	dir := t.TempDir()
 	m.SetSeries(testSeriesID, types.SeriesResource{ID: testSeriesID, Title: "Test Show", TVDBID: testTVDBID, Path: "/tv/test-show"})
 	m.SetEpisode(testEpisodeID, expectedEpisode())
-	m.SetParseResult(singleEpisodeParse(testTVDBID, 3, 1))
-
-	// The output path points at a file that does not exist yet: the first
-	// retry attempt fails the file-existence re-check (SPEC §3.6 step 2).
-	// The retryable error lives in the history Data, not in ErrorMessage:
-	// a non-empty ErrorMessage would trip the stuck-download detector, whose
-	// remove_queue action outranks import recovery.
-	filePath := filepath.Join(dir, "Show.S01E05.mkv")
-	item := importFailedItem(427, filePath, "")
+	m.SetQualityDefinitions(qualityDefinitions()...)
+	m.SetLanguages(types.Language{ID: 1, Name: "English"})
+	// The preview starts empty (nothing importable yet): the first retry
+	// attempt fails the preview step. The retryable error lives in the
+	// history Data, not in ErrorMessage: a non-empty ErrorMessage would trip
+	// the stuck-download detector, whose remove_queue action outranks import
+	// recovery.
+	m.SetManualImportPreview()
+	item := importFailedItem(427, "", "")
 	m.SetQueue(item) // the item must stay in the queue for the retry to proceed
 
 	retryableHistory := []types.HistoryItem{{
@@ -698,15 +692,13 @@ func TestScenarioRetryRecoversOnLaterAttempt(t *testing.T) {
 		t.Fatal("expected exactly 1 retry.scheduled log")
 	}
 
-	// First fire: file still missing.
-	waitFor(t, 3*time.Second, "retry.file-missing log", func() bool {
-		return len(logsWithEvent(t, p, "retry.file-missing")) > 0
+	// First fire: the preview still has nothing importable.
+	waitFor(t, 3*time.Second, "retry.no-importable-file log", func() bool {
+		return len(logsWithEvent(t, p, "retry.no-importable-file")) > 0
 	})
 
-	// The file appears before the second fire.
-	if err := os.WriteFile(filePath, []byte("fake video"), 0o644); err != nil {
-		t.Fatalf("create candidate file: %v", err)
-	}
+	// The download becomes importable before the second fire.
+	m.SetManualImportPreview(singleEpisodePreview(3))
 
 	// Second fire: the retry succeeds and the manual import lands. Both the
 	// success log and the POST come from the same timer fire, so poll for
@@ -731,10 +723,9 @@ func TestScenarioRetryExhausted(t *testing.T) {
 	cfg.DryRun = false
 	cfg.Automation.RetryImports.RetryIntervals = []config.Duration{config.Duration(50 * time.Millisecond)}
 
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "Show.S01E05.mkv") // never created
-	item := importFailedItem(428, filePath, "")
+	item := importFailedItem(428, "", "")
 	m.SetQueue(item)
+	m.SetManualImportPreview() // nothing ever becomes importable
 
 	// Retryable signature lives in history Data (not ErrorMessage, which
 	// would trip the stuck-download detector).
@@ -768,19 +759,17 @@ func TestScenarioRetryExhausted(t *testing.T) {
 func TestScenarioMultiEpisodeImport(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
-	pr := parseResult(testTVDBID, []int{5, 6},
-		[]types.EpisodeLookup{
-			{ID: 500, EpisodeNumber: 5, SeasonNumber: 1},
-			{ID: 501, EpisodeNumber: 6, SeasonNumber: 1},
-		}, 3, 1)
-	dir := setupImportMock(t, m, pr)
+	setupImportMock(t, m, previewFile(3, []types.EpisodeLookup{
+		{ID: testEpisodeID, EpisodeNumber: 5, SeasonNumber: 1},
+		{ID: 106, EpisodeNumber: 6, SeasonNumber: 1},
+	}))
 	p := newPipeline(t, m, cfg)
-	item := importFailedItem(429, dir, "")
+	item := importFailedItem(429, "", "")
+	m.SetQueue(item)
 
 	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec)
@@ -796,12 +785,12 @@ func TestScenarioMultiEpisodeImport(t *testing.T) {
 			t.Fatalf("expected one episode per import, got %+v", req.Files)
 		}
 		seen[req.Files[0].EpisodeIDs[0]] = true
-		if req.Files[0].Path != filepath.Join(dir, "Test.Show.S01E05.720p.mkv") {
+		if req.Files[0].Path != previewFile(3, nil).Path {
 			t.Fatalf("unexpected import path %q", req.Files[0].Path)
 		}
 	}
-	if !seen[500] || !seen[501] {
-		t.Fatalf("expected imports for episodes 500 and 501, got %v", seen)
+	if !seen[testEpisodeID] || !seen[106] {
+		t.Fatalf("expected imports for episodes %d and 106, got %v", testEpisodeID, seen)
 	}
 }
 
@@ -810,18 +799,19 @@ func TestScenarioMultiEpisodeImport(t *testing.T) {
 func TestScenarioPreImportExistingBetterFile(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
-	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 3, 1))
+	setupImportMock(t, m, singleEpisodePreview(3))
 	// Existing Bluray-1080p (weight 100) >= candidate HDTV-720p (weight 30).
-	m.SetEpisode(500, types.EpisodeResource{ID: 500, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: true, EpisodeFileID: 7})
+	m.SetEpisode(testEpisodeID, types.EpisodeResource{ID: testEpisodeID, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: true, EpisodeFileID: 7})
 	m.SetEpisodeFile(7, types.EpisodeFileResource{ID: 7, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, Quality: "Bluray-1080p"})
 
 	p := newPipeline(t, m, cfg)
-	dec := mustProcess(t, p, importFailedItem(430, dir, ""), importFailedHistory())
+	item := importFailedItem(430, "", "")
+	m.SetQueue(item)
+	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec)
 
 	noMutations(t, m)
@@ -839,18 +829,19 @@ func TestScenarioPreImportExistingBetterFile(t *testing.T) {
 func TestScenarioPreImportExistingLowerQuality(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
-	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 3, 1))
+	setupImportMock(t, m, singleEpisodePreview(3))
 	// Existing SDTV (weight 1) < candidate HDTV-720p (weight 30).
-	m.SetEpisode(500, types.EpisodeResource{ID: 500, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: true, EpisodeFileID: 8})
+	m.SetEpisode(testEpisodeID, types.EpisodeResource{ID: testEpisodeID, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: true, EpisodeFileID: 8})
 	m.SetEpisodeFile(8, types.EpisodeFileResource{ID: 8, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, Quality: "SDTV"})
 
 	p := newPipeline(t, m, cfg)
-	dec := mustProcess(t, p, importFailedItem(431, dir, ""), importFailedHistory())
+	item := importFailedItem(431, "", "")
+	m.SetQueue(item)
+	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec)
 
 	post := singleMutation(t, m)
@@ -858,25 +849,26 @@ func TestScenarioPreImportExistingLowerQuality(t *testing.T) {
 		t.Fatalf("expected import command POST, got %s %s", post.Method, post.Path)
 	}
 	req := importCommandBody(t, post)
-	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != 500 {
-		t.Fatalf("expected import for episode 500, got %+v", req.Files)
+	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != testEpisodeID {
+		t.Fatalf("expected import for episode testEpisodeID, got %+v", req.Files)
 	}
 }
 
 func TestScenarioPreImportNoExistingFile(t *testing.T) {
 	m := NewMockSonarr()
 	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
-	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 3, 1))
+	setupImportMock(t, m, singleEpisodePreview(3))
 	// No file on the episode: set explicitly (the mock 404s unknown ids,
 	// like live).
-	m.SetEpisode(500, types.EpisodeResource{ID: 500, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: false})
+	m.SetEpisode(testEpisodeID, types.EpisodeResource{ID: testEpisodeID, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: false})
 	p := newPipeline(t, m, cfg)
-	dec := mustProcess(t, p, importFailedItem(432, dir, ""), importFailedHistory())
+	item := importFailedItem(432, "", "")
+	m.SetQueue(item)
+	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec)
 
 	post := singleMutation(t, m)
@@ -884,8 +876,8 @@ func TestScenarioPreImportNoExistingFile(t *testing.T) {
 		t.Fatalf("expected import command POST, got %s %s", post.Method, post.Path)
 	}
 	req := importCommandBody(t, post)
-	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != 500 {
-		t.Fatalf("expected import for episode 500, got %+v", req.Files)
+	if len(req.Files) != 1 || len(req.Files[0].EpisodeIDs) != 1 || req.Files[0].EpisodeIDs[0] != testEpisodeID {
+		t.Fatalf("expected import for episode testEpisodeID, got %+v", req.Files)
 	}
 }
 
@@ -982,72 +974,6 @@ func TestScenarioExclusionRootPath(t *testing.T) {
 	}
 }
 
-// ─── Scenario 16: path translation agent → Sonarr ─────────────────────
-
-func TestScenarioPathTranslation(t *testing.T) {
-	m := NewMockSonarr()
-	defer m.Close()
-	m.SetVersion("3.0.0.900") // failed-import recovery/retry parse path= like the v3 API
-	cfg := config.Defaults()
-	cfg.DryRun = false
-	cfg.Automation.AutoManualImport.Enabled = true
-
-	root := t.TempDir()
-	agentRoot := filepath.Join(root, "agent")
-	sonarrRoot := filepath.Join(root, "sonarr")
-	for _, d := range []string{agentRoot, sonarrRoot} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", d, err)
-		}
-	}
-	cfg.Paths.AgentRoot = agentRoot
-	cfg.Paths.SonarrRoot = sonarrRoot
-
-	// The candidate file lives on the agent's filesystem…
-	agentDownloads := filepath.Join(agentRoot, "downloads")
-	if err := os.MkdirAll(agentDownloads, 0o755); err != nil {
-		t.Fatalf("mkdir downloads: %v", err)
-	}
-	agentFile := filepath.Join(agentDownloads, "Test.Show.S01E05.720p.mkv")
-	if err := os.WriteFile(agentFile, []byte("fake video"), 0o644); err != nil {
-		t.Fatalf("write candidate file: %v", err)
-	}
-
-	// …while the queue item's OutputPath is Sonarr's view of the folder.
-	sonarrDownloads := filepath.Join(sonarrRoot, "downloads")
-	wantSonarrPath := filepath.Join(sonarrDownloads, "Test.Show.S01E05.720p.mkv")
-
-	m.SetSeries(testSeriesID, types.SeriesResource{ID: testSeriesID, Title: "Test Show", TVDBID: testTVDBID, Path: "/tv/test-show"})
-	m.SetEpisode(testEpisodeID, expectedEpisode())
-	// The pre-import gate fetches the parse result's episode; register it
-	// as file-less (the mock 404s unknown ids, like live).
-	m.SetEpisode(500, types.EpisodeResource{ID: 500, SeriesID: testSeriesID, SeasonNumber: 1, EpisodeNumber: 5, HasFile: false})
-	m.SetQualityDefinitions(qualityDefinitions()...)
-	m.SetLanguages(types.Language{ID: 1, Name: "English"})
-	m.SetParseResult(singleEpisodeParse(testTVDBID, 3, 1))
-
-	p := newPipeline(t, m, cfg)
-	dec := mustProcess(t, p, importFailedItem(433, sonarrDownloads, ""), importFailedHistory())
-	mustApproved(t, dec)
-
-	// The parse request must use the Sonarr-rooted path.
-	parseReqs := m.ParseRequests()
-	if len(parseReqs) == 0 {
-		t.Fatal("expected at least one parse request")
-	}
-	gotParsePath := parseReqs[0].Query.Get("path")
-	if gotParsePath != wantSonarrPath {
-		t.Fatalf("parse path: expected Sonarr view %q, got %q", wantSonarrPath, gotParsePath)
-	}
-
-	// The manual import body must use the Sonarr-rooted path too.
-	post := singleMutation(t, m)
-	req := importCommandBody(t, post)
-	if req.Files[0].Path != wantSonarrPath {
-		t.Fatalf("manual import path: expected Sonarr view %q, got %q", wantSonarrPath, req.Files[0].Path)
-	}
-}
-
 // ─── Extra: Sonarr v4 blocklist DELETE uses removeFromClient=true ─────
 
 func TestScenarioRemoveQueueV4BlocklistParam(t *testing.T) {
@@ -1074,28 +1000,32 @@ func TestScenarioRemoveQueueV4BlocklistParam(t *testing.T) {
 	}
 }
 
-// ─── Extra: v4 parse 204 and the evaluate-only reprocess endpoint ─────
+// ─── Extra: v4 preview recovery and the evaluate-only reprocess endpoint ─
 
-// TestScenarioV4ParsePath204NoImport: against a v4 server the parse
-// endpoint answers 204 No Content to path= calls, so the parse-based
-// failed-import pipeline (§3.4) must not import anything — the honest
-// outcome is a no-op (SPEC §12). This is the regression guard for the live
-// bug where path= parse silently returned an empty result.
-func TestScenarioV4ParsePath204NoImport(t *testing.T) {
+// TestScenarioV4PreviewRecoveryWorks: the failed-import pipeline is built on
+// the manual-import preview (which v4 serves normally, unlike path= parse
+// which answers 204), so recovery works against a v4 server (SPEC §12).
+func TestScenarioV4PreviewRecoveryWorks(t *testing.T) {
 	m := NewMockSonarr() // default version 4
 	defer m.Close()
 	cfg := config.Defaults()
 	cfg.DryRun = false
 	cfg.Automation.AutoManualImport.Enabled = true
 
-	dir := setupImportMock(t, m, singleEpisodeParse(testTVDBID, 3, 1))
+	setupImportMock(t, m, singleEpisodePreview(3))
 	p := newPipeline(t, m, cfg)
-	dec := mustProcess(t, p, importFailedItem(424, dir, ""), importFailedHistory())
+	item := importFailedItem(424, "", "")
+	m.SetQueue(item)
+	dec := mustProcess(t, p, item, importFailedHistory())
 	mustApproved(t, dec)
 
-	noMutations(t, m)
-	if n := len(m.Posts()); n != 0 {
-		t.Fatalf("no import command may be issued on v4 (parse 204), got %d POSTs", n)
+	post := singleMutation(t, m)
+	if post.Method != http.MethodPost || post.Path != "/api/v3/command" {
+		t.Fatalf("expected import command POST on v4, got %s %s", post.Method, post.Path)
+	}
+	req := importCommandBody(t, post)
+	if len(req.Files) != 1 || req.Files[0].EpisodeIDs[0] != testEpisodeID {
+		t.Fatalf("expected import for episode testEpisodeID, got %+v", req.Files)
 	}
 }
 
@@ -1143,5 +1073,129 @@ func TestScenarioReprocessEndpointNeverImports(t *testing.T) {
 	}
 	if len(page.Records) != 1 || page.Records[0].ID != 900 {
 		t.Fatalf("queue after reprocess = %+v, want item 900 still present", page.Records)
+	}
+}
+// torrentErrorItem is a queue item carrying the qBit error state signature:
+// Sonarr v4 maps qBit state=error to status "warning" with the localized
+// "qBittorrent is reporting an error" message, and the item never leaves the
+// queue on its own (SPEC §3.9).
+func torrentErrorItem() types.QueueItem {
+	it := baseItem(440, testSeriesID, testEpisodeID, "synthetic-hash-440")
+	it.Status = "warning"
+	it.TrackedDownloadStatus = "warning"
+	it.ErrorMessage = "qBittorrent is reporting an error"
+	it.Title = "Test.Show.S01E05.720p.WEB-DL"
+	return it
+}
+
+// grabbedHistory records the release's grab (the queue item's synthetic hash
+// never matches history's downloadId for qBit bridges, so matching is by
+// series/episode + title).
+func grabbedHistory() []types.HistoryItem {
+	return []types.HistoryItem{{
+		ID:          90,
+		SeriesID:    testSeriesID,
+		EpisodeID:   testEpisodeID,
+		EventType:   "grabbed",
+		SourceTitle: "Test.Show.S01E05.720p.WEB-DL",
+		Date:        time.Now().Add(-2 * time.Hour),
+	}}
+}
+
+// TestScenarioTorrentErrorBlocklistAndRedownload: detection → removal →
+// blocklist via history/failed (which triggers Sonarr's built-in redownload);
+// no explicit EpisodeSearch command is needed.
+func TestScenarioTorrentErrorBlocklistAndRedownload(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+	m.SetQueue(torrentErrorItem())
+	m.SetHistory(grabbedHistory()...)
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, torrentErrorItem(), grabbedHistory())
+	mustApproved(t, dec)
+	if dec.Action != types.ActionRemoveQueue {
+		t.Fatalf("action = %s, want remove_queue", dec.Action)
+	}
+
+	muts := m.Mutations()
+	if len(muts) != 2 {
+		t.Fatalf("mutations = %d, want 2 (DELETE + history/failed), got %+v", len(muts), muts)
+	}
+	if muts[0].Method != http.MethodDelete || muts[0].Path != "/api/v3/queue/440" {
+		t.Fatalf("mutation[0] = %s %s, want DELETE /api/v3/queue/440", muts[0].Method, muts[0].Path)
+	}
+	if muts[1].Method != http.MethodPost || muts[1].Path != "/api/v3/history/failed/90" {
+		t.Fatalf("mutation[1] = %s %s, want POST /api/v3/history/failed/90", muts[1].Method, muts[1].Path)
+	}
+	// No EpisodeSearch: the history/failed command triggers Sonarr's own
+	// redownload when AutoRedownloadFailed is enabled.
+	for _, rec := range m.Requests() {
+		if rec.Method == http.MethodPost && rec.Path == "/api/v3/command" {
+			t.Fatalf("unexpected command POST (EpisodeSearch) after blocklist: %+v", rec)
+		}
+	}
+	if len(logsWithEvent(t, p, "action.recommended")) != 0 {
+		t.Fatal("live mode must not log action.recommended")
+	}
+}
+
+// TestScenarioTorrentErrorNoHistorySearches: no grabbed history found — the
+// release cannot be blocklisted, so an explicit EpisodeSearch replaces it.
+func TestScenarioTorrentErrorNoHistorySearches(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+	m.SetQueue(torrentErrorItem())
+	m.SetHistory() // no grabbed history for this release
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, torrentErrorItem(), nil)
+	mustApproved(t, dec)
+
+	muts := m.Mutations()
+	if len(muts) != 2 {
+		t.Fatalf("mutations = %d, want 2 (DELETE + EpisodeSearch), got %+v", len(muts), muts)
+	}
+	if muts[0].Method != http.MethodDelete {
+		t.Fatalf("mutation[0] = %s, want the queue DELETE first", muts[0].Method)
+	}
+	cmd := muts[1]
+	if cmd.Method != http.MethodPost || cmd.Path != "/api/v3/command" {
+		t.Fatalf("mutation[1] = %s %s, want the EpisodeSearch command POST", cmd.Method, cmd.Path)
+	}
+	if !strings.Contains(string(cmd.Body), "EpisodeSearch") || !strings.Contains(string(cmd.Body), "105") {
+		t.Fatalf("EpisodeSearch body = %s, want name EpisodeSearch for episode 105", cmd.Body)
+	}
+}
+
+// TestScenarioTorrentErrorDryRun: dry-run logs the intended removal with its
+// blocklist/redownload flags and mutates nothing.
+func TestScenarioTorrentErrorDryRun(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = true
+	m.SetQueue(torrentErrorItem())
+	m.SetHistory(grabbedHistory()...)
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, torrentErrorItem(), grabbedHistory())
+	mustApproved(t, dec)
+
+	noMutations(t, m)
+	recs := logsWithEvent(t, p, "action.recommended")
+	if len(recs) != 1 {
+		t.Fatalf("action.recommended logs = %d, want 1", len(recs))
+	}
+	if dry, _ := recs[0]["dry_run"].(bool); !dry {
+		t.Fatal("action.recommended must carry dry_run=true")
+	}
+	msg, _ := recs[0]["msg"].(string)
+	if !strings.Contains(msg, "torrent client error") {
+		t.Fatalf("message = %q, want torrent-error dry-run phrasing", msg)
 	}
 }

@@ -1,0 +1,10 @@
+.git
+.gitignore
+.dockerignore
+.slim/
+*.md
+*_test.go
+sonarr-remediator
+sonarr-remediator-amd64
+config.local.yaml
+config.live.yaml

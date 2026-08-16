@@ -23,32 +23,16 @@ type Executor struct {
 	retry      *RetryScheduler
 	logger     *slog.Logger // component=executor, used for executor's own logs
 	baseLogger *slog.Logger // unscoped, handed to recovery.Recover (which scopes it)
-	translator *sonarr.PathTranslator
-	roots      []string
 }
 
-// New builds the executor. Download roots default to cfg.Paths.DownloadRoots;
-// when empty they are discovered once from Sonarr's download client
-// configuration (a warning is logged and empty roots are used on failure).
+// New builds the executor.
 func New(client *sonarr.Client, cfg *config.Config, retry *RetryScheduler, logger *slog.Logger) *Executor {
-	roots := cfg.Paths.DownloadRoots
-	if len(roots) == 0 {
-		discovered, err := client.DownloadRoots(context.Background())
-		if err != nil {
-			logger.Warn("failed to discover download roots, proceeding without roots", "error", err)
-		} else {
-			roots = discovered
-		}
-	}
-
 	return &Executor{
 		client:     client,
 		cfg:        cfg,
 		retry:      retry,
 		logger:     logger.With("component", "executor"),
 		baseLogger: logger,
-		translator: sonarr.NewPathTranslator(cfg.Paths.AgentRoot, cfg.Paths.SonarrRoot),
-		roots:      roots,
 	}
 }
 
@@ -86,15 +70,30 @@ func (e *Executor) Execute(ctx context.Context, decision types.Decision) error {
 }
 
 // removeQueue removes the queue item via Sonarr, optionally blocklisting the
-// release (SPEC §3.2, §3.3).
+// release (SPEC §3.2, §3.3). Torrent-client error items (§3.9) use the
+// extended flow: after the removal the release is blocklisted through
+// POST /api/v3/history/failed/{id} (the only working blocklist path for
+// qBit-bridge clients) and a replacement search is triggered either by
+// Sonarr's own redownload (the history/failed command does this when
+// AutoRedownloadFailed is on) or by an explicit EpisodeSearch fallback.
 func (e *Executor) removeQueue(ctx context.Context, decision types.Decision) error {
 	item := decision.Issue.QueueItem
 	id := strconv.Itoa(item.ID)
 
 	if decision.DryRun {
 		msg := "Would have removed queue item " + id
+		if decision.Issue.Type == types.IssueTorrentError {
+			rule := e.cfg.Automation.RemoveTorrentErrors
+			msg = "Would have removed queue item " + id +
+				" (torrent client error: blocklist=" + strconv.FormatBool(rule.BlocklistRelease) +
+				", redownload=" + strconv.FormatBool(rule.Redownload) + ")"
+		}
 		e.logger.Info(msg, e.decisionAttrs(decision, "action.recommended", msg)...)
 		return nil
+	}
+
+	if decision.Issue.Type == types.IssueTorrentError {
+		return e.removeTorrentError(ctx, decision, id)
 	}
 
 	blocklist := e.cfg.Automation.RemoveBrokenDownloads.BlocklistRelease
@@ -111,6 +110,63 @@ func (e *Executor) removeQueue(ctx context.Context, decision types.Decision) err
 
 	msg := "Removed queue item " + id
 	e.logger.Info(msg, e.decisionAttrs(decision, "action.taken", msg)...)
+	return nil
+}
+
+// removeTorrentError removes a torrent-client error item and, per the
+// removeTorrentErrors rule, blocklists the release and triggers a replacement
+// search (SPEC §3.9). Order matters: the removal happens first so the
+// history/failed command cannot import the dying item, and the blocklist
+// happens before any fallback search so the same release is not re-grabbed.
+func (e *Executor) removeTorrentError(ctx context.Context, decision types.Decision, id string) error {
+	item := decision.Issue.QueueItem
+	rule := e.cfg.Automation.RemoveTorrentErrors
+	attrs := e.decisionAttrs(decision, "action.taken", "Removed queue item "+id)
+
+	if err := e.client.RemoveQueueItem(ctx, item.ID, false); err != nil {
+		msg := "Failed to remove queue item " + id
+		e.logger.Error(msg,
+			append(e.decisionAttrs(decision, "action.error", msg), "error", err)...)
+		return fmt.Errorf("executor: remove queue item %d: %w", item.ID, err)
+	}
+	e.logger.Info("Removed queue item "+id, attrs...)
+
+	blocklisted := false
+	if rule.BlocklistRelease {
+		h, err := e.client.FindGrabbedHistory(ctx, item.SeriesID, item.EpisodeID, item.Title)
+		if err != nil {
+			e.logger.Warn("failed to look up grabbed history for blocklist",
+				"decision_id", decisionID(decision),
+				"item", item.CompositeKey(),
+				"error", err)
+		} else if h == nil {
+			e.logger.Info("no grabbed history found for release; skipping blocklist",
+				"decision_id", decisionID(decision),
+				"item", item.CompositeKey())
+		} else {
+			if err := e.client.MarkHistoryFailed(ctx, h.ID); err != nil {
+				e.logger.Error("failed to mark grabbed history as failed",
+					append(attrs, "history_id", h.ID, "error", err)...)
+			} else {
+				blocklisted = true
+				e.logger.Info("blocklisted release via history "+strconv.Itoa(h.ID),
+					append(attrs, "history_id", h.ID, "release_title", item.Title)...)
+			}
+		}
+	}
+
+	// Sonarr's history/failed command already triggers the redownload when
+	// AutoRedownloadFailed is enabled; an explicit EpisodeSearch is the
+	// fallback when nothing was blocklisted (or blocklisting is off).
+	if rule.Redownload && !blocklisted {
+		if err := e.client.EpisodeSearch(ctx, []int{item.EpisodeID}); err != nil {
+			e.logger.Error("failed to trigger episode search",
+				append(attrs, "error", err)...)
+			return fmt.Errorf("executor: episode search for queue item %d: %w", item.ID, err)
+		}
+		e.logger.Info("triggered episode search for replacement",
+			append(attrs, "episode_id", item.EpisodeID)...)
+	}
 	return nil
 }
 
@@ -136,7 +192,7 @@ func (e *Executor) manualImport(ctx context.Context, decision types.Decision) er
 		return nil
 	}
 
-	if err := recovery.Recover(ctx, e.client, e.cfg, e.translator, e.roots, item, history, e.baseLogger); err != nil {
+	if err := recovery.Recover(ctx, e.client, e.cfg, item, e.baseLogger); err != nil {
 		return fmt.Errorf("executor: import recovery for queue item %d: %w", item.ID, err)
 	}
 	return nil

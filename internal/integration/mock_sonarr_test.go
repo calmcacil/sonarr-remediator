@@ -49,8 +49,6 @@ type MockSonarr struct {
 	seriesByID   map[int]types.SeriesResource
 	episodeByID  map[int]types.EpisodeResource
 	fileByID     map[int]types.EpisodeFileResource
-	parseResult  *types.ParseResult
-	parseFailures int // remaining parse calls answered with HTTP 500
 	manualImportPreview []types.ManualImportFile // GET /api/v3/manualimport response
 
 	requests []recordedRequest
@@ -94,10 +92,8 @@ func (m *MockSonarr) SetQueue(items ...types.QueueItem) {
 }
 
 // SetVersion switches the version served by GET /api/v3/system/status.
-// The parse endpoint follows the version like the live API: v4 answers
-// HTTP 204 to path= parse calls, v3 answers 200 (SPEC §12). The default is
-// v4, matching production; tests of v3-only pipelines (failed-import
-// recovery §3.4, import retries §3.6) must SetVersion("3.0.0.900").
+// The queue delete parameter naming follows the version (blocklist on v3,
+// removeFromClient on v4). The default is v4, matching production.
 func (m *MockSonarr) SetVersion(v string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -156,20 +152,6 @@ func (m *MockSonarr) SetEpisodeFile(id int, ef types.EpisodeFileResource) {
 	m.fileByID[id] = ef
 }
 
-// SetParseResult sets the GET /api/v3/parse response.
-func (m *MockSonarr) SetParseResult(pr *types.ParseResult) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.parseResult = pr
-}
-
-// FailParseNext makes the next n parse calls answer HTTP 500.
-func (m *MockSonarr) FailParseNext(n int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.parseFailures = n
-}
-
 // SetManualImportPreview replaces the GET /api/v3/manualimport response.
 func (m *MockSonarr) SetManualImportPreview(files ...types.ManualImportFile) {
 	m.mu.Lock()
@@ -214,17 +196,6 @@ func (m *MockSonarr) Posts() []recordedRequest {
 	var out []recordedRequest
 	for _, r := range m.Requests() {
 		if r.Method == http.MethodPost {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// ParseRequests returns the GET /api/v3/parse requests in arrival order.
-func (m *MockSonarr) ParseRequests() []recordedRequest {
-	var out []recordedRequest
-	for _, r := range m.Requests() {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.Path, "/api/v3/parse") {
 			out = append(out, r)
 		}
 	}
@@ -310,6 +281,11 @@ func (m *MockSonarr) serveDefault(w http.ResponseWriter, r *http.Request) {
 		m.mu.Unlock()
 		// Real Sonarr serves history inside a paged envelope (SPEC §12).
 		writeJSON(w, types.Page[types.HistoryItem]{Page: 1, PageSize: len(items), TotalRecords: len(items), Records: items})
+	case r.Method == http.MethodPost && strings.HasPrefix(p, "/api/v3/history/failed/"):
+		// Sonarr's "mark as failed" on a history row: blocklists the release
+		// and triggers the built-in redownload when AutoRedownloadFailed is
+		// on. Recorded centrally as a mutation like every POST/DELETE.
+		writeJSON(w, nil)
 	case r.Method == http.MethodGet && p == "/api/v3/qualitydefinition":
 		m.mu.Lock()
 		defs := m.qualities
@@ -356,8 +332,6 @@ func (m *MockSonarr) serveDefault(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, ep)
-	case r.Method == http.MethodGet && strings.HasPrefix(p, "/api/v3/parse"):
-		m.serveParse(w, r)
 	case r.Method == http.MethodGet && p == "/api/v3/manualimport":
 		m.serveManualImportPreview(w, r)
 	case r.Method == http.MethodPost && p == "/api/v3/manualimport":
@@ -455,38 +429,6 @@ func (m *MockSonarr) serveQueue(w http.ResponseWriter) {
 	writeJSON(w, types.Page[types.QueueItem]{Page: 1, PageSize: len(items), TotalRecords: len(items), Records: items})
 }
 
-func (m *MockSonarr) serveParse(w http.ResponseWriter, r *http.Request) {
-	m.mu.Lock()
-	fail := m.parseFailures > 0
-	if fail {
-		m.parseFailures--
-	}
-	pr := m.parseResult
-	version := m.version
-	m.mu.Unlock()
-	if fail {
-		http.Error(w, "parse unavailable", http.StatusInternalServerError)
-		return
-	}
-	if strings.HasPrefix(version, "4") && r.URL.Query().Get("path") != "" {
-		// Live v4 answers 204 No Content to path= parse calls — even for
-		// files already in the library (verified against prod). Only
-		// title= parses on v4. v3 parses path= normally.
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if pr == nil {
-		writeJSON(w, types.ParseResult{})
-		return
-	}
-	writeJSON(w, pr)
-}
-
-// serveManualImportPreview mirrors the live GET /api/v3/manualimport:
-// the downloadId must name a tracked download that has files on disk. An
-// empty downloadId is a 500 (live throws on the empty path); a downloadId
-// the mock has never seen returns an empty list; a known one (a queue item
-// carrying that DownloadID) returns the configured preview files.
 func (m *MockSonarr) serveManualImportPreview(w http.ResponseWriter, r *http.Request) {
 	dl := r.URL.Query().Get("downloadId")
 	m.mu.Lock()

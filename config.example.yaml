@@ -16,9 +16,9 @@ monitoring:
 # ─── File System ───
 paths:
   downloadRoots: []
-  # If empty, fetched from Sonarr's download client configuration at startup.
-  # If the agent container's mount path differs from Sonarr's, provide explicit mappings.
-  agentRoot: "" # The root path as seen by the agent container (e.g., /data)
+  # Legacy (SPEC §3.4): recovery is filesystem-independent; these keys are
+  # parsed and validated for compatibility only.
+  agentRoot: "" # The root path as seen by the agent (e.g., /data)
   sonarrRoot: "" # The root path as seen by Sonarr (e.g., /data)
 
 # ─── Exclusion ───
@@ -43,6 +43,18 @@ automation:
     errorConditions:
       - missing_files
       - abandoned
+
+  # Torrent client error (qBittorrent / torboxarr-style bridges): Sonarr v4
+  # reports the qBit error state as warning + "qBittorrent is reporting an
+  # error" and never clears the item. The release is removed, blocklisted via
+  # POST /api/v3/history/failed/{id} (the queue blocklist parameter no-ops for
+  # these clients), and re-searched so a different release is grabbed.
+  removeTorrentErrors:
+    enabled: true
+    waitHours: 1
+    errorMessagePattern: "" # default: "(?i)qBittorrent is reporting an error"
+    blocklistRelease: true
+    redownload: true
 
   retryImports:
     enabled: true

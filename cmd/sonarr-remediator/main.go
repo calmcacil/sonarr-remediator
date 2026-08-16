@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -27,9 +28,21 @@ import (
 // to complete before aborting them (SPEC §11).
 const gracefulDrainTimeout = 30 * time.Second
 
+// version is stamped at build time via -ldflags "-X main.version=..." and
+// logged at startup so container logs identify the exact build
+// (DOCKER_SPEC.md §3).
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "config.example.yaml", "path to configuration file")
+	healthcheck := flag.Bool("healthcheck", false, "validate configuration and Sonarr connectivity, then exit (container healthcheck)")
 	flag.Parse()
+
+	// Container healthcheck mode (DOCKER_SPEC.md §4): no monitors start and
+	// nothing is mutated. Exit 0 = config valid and Sonarr reachable.
+	if *healthcheck {
+		os.Exit(runHealthcheck(*configPath))
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -41,7 +54,7 @@ func main() {
 		fatal("failed to initialize logging", err)
 	}
 	mainLog := logger.With("component", "main")
-	mainLog.Info("starting sonarr recovery agent", "config", *configPath, "dry_run", cfg.DryRun)
+	mainLog.Info("starting sonarr recovery agent", "config", *configPath, "dry_run", cfg.DryRun, "version", version)
 
 	client, err := sonarr.New(cfg.Sonarr.URL, cfg.Sonarr.APIKey, cfg.Sonarr.Timeout.Std(), cfg.Sonarr.MaxConcurrency)
 	if err != nil {
@@ -83,6 +96,7 @@ func main() {
 	detectorsList := []detectors.Detector{
 		detectors.NewStuckDownloadDetector(cfg, logger),
 		detectors.NewNotCustomFormatDetector(cfg, logger),
+		detectors.NewTorrentErrorDetector(cfg, logger),
 		detectors.NewImportRecoveryDetector(cfg, logger),
 	}
 
@@ -175,6 +189,32 @@ func main() {
 	}
 
 	mainLog.Info("shutdown complete")
+}
+
+// runHealthcheck validates the configuration and probes Sonarr, returning
+// a process exit code. The probe uses a 4 s internal deadline so it always
+// finishes inside Docker's 5 s HEALTHCHECK timeout (DOCKER_SPEC.md §3, §9).
+func runHealthcheck(configPath string) int {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck: invalid configuration:", err)
+		return 1
+	}
+	const probeTimeout = 4 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	client, err := sonarr.New(cfg.Sonarr.URL, cfg.Sonarr.APIKey, probeTimeout, 1)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck: sonarr client error:", err)
+		return 1
+	}
+	status, err := client.GetSystemStatus(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck: sonarr unreachable:", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stdout, "healthcheck: ok (sonarr %s)\n", status.Version)
+	return 0
 }
 
 // fatal logs one structured error line on stdout with component=main and

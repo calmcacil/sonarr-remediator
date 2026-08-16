@@ -87,6 +87,7 @@ type ExclusionsConfig struct {
 type AutomationConfig struct {
 	RemoveNotCustomFormat RemoveNotCustomFormatConfig `yaml:"removeNotCustomFormat"`
 	RemoveBrokenDownloads RemoveBrokenDownloadsConfig `yaml:"removeBrokenDownloads"`
+	RemoveTorrentErrors   RemoveTorrentErrorsConfig   `yaml:"removeTorrentErrors"`
 	RetryImports          RetryImportsConfig          `yaml:"retryImports"`
 	AutoManualImport      AutoManualImportConfig      `yaml:"autoManualImport"`
 	Reconcile             ReconcileConfig             `yaml:"reconcile"`
@@ -106,6 +107,21 @@ type RemoveBrokenDownloadsConfig struct {
 	WaitHours        float64  `yaml:"waitHours"`
 	BlocklistRelease bool     `yaml:"blocklistRelease"`
 	ErrorConditions  []string `yaml:"errorConditions"`
+}
+
+// RemoveTorrentErrorsConfig gates removal of downloads whose torrent client
+// (qBittorrent-compatible bridges such as torboxarr) reports an error.
+// Sonarr v4 surfaces the qBit error state as status "warning" with the
+// localized "qBittorrent is reporting an error" message, and items never
+// leave the queue on their own (SPEC §3.9). Blocklisting goes through
+// POST /api/v3/history/failed/{id} — the queue DELETE blocklist parameter is
+// a no-op for these clients because their reported hash is synthetic.
+type RemoveTorrentErrorsConfig struct {
+	Enabled              bool    `yaml:"enabled"`
+	WaitHours            float64 `yaml:"waitHours"`
+	ErrorMessagePattern  string  `yaml:"errorMessagePattern"`
+	BlocklistRelease     bool    `yaml:"blocklistRelease"`
+	Redownload           bool    `yaml:"redownload"`
 }
 
 // RetryImportsConfig configures transient-failure retries.

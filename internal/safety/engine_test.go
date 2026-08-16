@@ -23,6 +23,7 @@ func baseConfig() *config.Config {
 		Automation: config.AutomationConfig{
 			RemoveBrokenDownloads: config.RemoveBrokenDownloadsConfig{Enabled: true},
 			RemoveNotCustomFormat: config.RemoveNotCustomFormatConfig{Enabled: true, WaitHours: 2},
+			RemoveTorrentErrors:   config.RemoveTorrentErrorsConfig{Enabled: true, WaitHours: 1},
 			AutoManualImport:      config.AutoManualImportConfig{Enabled: true},
 			RetryImports:          config.RetryImportsConfig{Enabled: true},
 		},
@@ -302,6 +303,66 @@ func TestNotCustomFormatWaitHoursBoundary(t *testing.T) {
 	c, _ = checkByName(dec, "age_hours")
 	if c.Actual != "2.1" {
 		t.Fatalf("age_hours actual = %q, want %q", c.Actual, "2.1")
+	}
+}
+
+// ─── torrent_client_error gates (SPEC §3.9) ────────────────────────────
+
+func TestEvaluateTorrentErrorGates(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutateCfg    func(*config.Config)
+		mutateItem   func(*types.QueueItem)
+		wantApproved bool
+		failAt       string
+		wantChecks   int // 0 = do not assert the count
+	}{
+		{name: "rule disabled", mutateCfg: func(c *config.Config) { c.Automation.RemoveTorrentErrors.Enabled = false },
+			wantApproved: false, failAt: "rule.enabled", wantChecks: 1},
+		{name: "tracked status ok", mutateItem: func(q *types.QueueItem) { q.TrackedDownloadStatus = "ok" },
+			wantApproved: false, failAt: "queue.trackedDownloadStatus", wantChecks: 2},
+		{name: "no error message", mutateItem: func(q *types.QueueItem) { q.ErrorMessage = "" },
+			wantApproved: false, failAt: "error_message", wantChecks: 3},
+		{name: "age below waitHours", mutateItem: func(q *types.QueueItem) { q.Added = time.Now().Add(-30 * time.Minute) },
+			wantApproved: false, failAt: "age_hours", wantChecks: 4},
+		{name: "state importing", mutateItem: func(q *types.QueueItem) { q.TrackedDownloadState = "importing" },
+			wantApproved: false, failAt: "queue.trackedDownloadState", wantChecks: 5},
+		{name: "retry scheduled", mutateItem: func(q *types.QueueItem) { q.DownloadID = "dl-retry" },
+			wantApproved: false, failAt: "retry.scheduled", wantChecks: 6},
+		{name: "all pass", wantApproved: true, failAt: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseConfig()
+			if tc.mutateCfg != nil {
+				tc.mutateCfg(cfg)
+			}
+			e, _ := newEngine(t, cfg)
+			e.SetSonarrUp(true)
+			item := queueItem(func(q *types.QueueItem) {
+				q.Status = "warning"
+				q.TrackedDownloadStatus = "warning"
+				q.ErrorMessage = "qBittorrent is reporting an error"
+			})
+			if tc.mutateItem != nil {
+				tc.mutateItem(&item)
+			}
+
+			if tc.failAt == "retry.scheduled" {
+				e.SetRetryActive(item.CompositeKey(), true)
+			}
+
+			dec := mustEvaluate(t, e, issue(types.IssueTorrentError, item))
+			if tc.wantApproved {
+				assertApproved(t, dec, types.ActionRemoveQueue)
+			} else {
+				assertRejected(t, dec, tc.failAt)
+			}
+			if tc.wantChecks > 0 && len(dec.Checks) != tc.wantChecks {
+				t.Fatalf("checks = %d, want %d (short-circuit length)", len(dec.Checks), tc.wantChecks)
+			}
+		})
 	}
 }
 
