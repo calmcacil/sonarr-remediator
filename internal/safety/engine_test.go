@@ -405,7 +405,7 @@ func TestEvaluateTorrentErrorGates(t *testing.T) {
 		{name: "rule disabled", mutateCfg: func(c *config.Config) { c.Automation.RemoveTorrentErrors.Enabled = false },
 			wantApproved: false, failAt: "rule.enabled", wantChecks: 1},
 		{name: "tracked status ok", mutateItem: func(q *types.QueueItem) { q.TrackedDownloadStatus = "ok" },
-			wantApproved: false, failAt: "queue.trackedDownloadStatus", wantChecks: 2},
+			wantApproved: true, failAt: "", wantChecks: 0},
 		{name: "no error message", mutateItem: func(q *types.QueueItem) { q.ErrorMessage = "" },
 			wantApproved: false, failAt: "error_message", wantChecks: 3},
 		{name: "age below waitHours", mutateItem: func(q *types.QueueItem) { q.Added = time.Now().Add(-30 * time.Minute) },

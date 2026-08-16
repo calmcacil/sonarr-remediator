@@ -410,8 +410,8 @@ bridge such as torboxarr (which presents TorBox as a qBittorrent API to
 Sonarr) — reports a download error.
 
 **Detection signature (verified against live Sonarr v4):** qBit `state=error`
-is mapped by Sonarr v4 to queue `status="warning"` with
-`trackedDownloadStatus="warning"` and the localized
+is mapped by Sonarr v4 to queue `status="warning"`; the tracked download
+status may vary by download client/bridge. The localized
 `errorMessage` "qBittorrent is reporting an error" (or a matching status
 message). The item never leaves the queue on its own: Sonarr's failed-download
 handling only trips on `status=failed`, which qBit-bridge clients never
@@ -422,7 +422,7 @@ history, so even manual failure handling silently no-ops.
 
 | Condition | Detection |
 |---|---|
-| Tracked status | `trackedDownloadStatus` = `warning` |
+| Queue status | `status` = `warning` |
 | Error text | `errorMessage` or status messages match the configured pattern (default `(?i)qBittorrent is reporting an error`) |
 | Age | >= `removeTorrentErrors.waitHours` (default 1 h) |
 
@@ -450,8 +450,8 @@ so the item is never double-handled.
 | Check | Expected |
 |---|---|
 | `rule.enabled` | `true` |
-| `queue.trackedDownloadStatus` | `warning` |
-| `error_message` | set |
+| `queue.status` | `warning` |
+| `error_message` | matching error text is present |
 | `age_hours` | `>= waitHours` (1) |
 | `queue.trackedDownloadState` | `!= importing` |
 | `retry.scheduled` | `false` |
