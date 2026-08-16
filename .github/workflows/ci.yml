@@ -20,33 +20,53 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      go: ${{ steps.expand.outputs.go }}
-      docker: ${{ steps.expand.outputs.docker }}
-      ci: ${{ steps.expand.outputs.ci }}
-      docs: ${{ steps.expand.outputs.docs }}
+      go: ${{ steps.filter.outputs.go }}
+      docker: ${{ steps.filter.outputs.docker }}
+      ci: ${{ steps.filter.outputs.ci }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Filter changed paths
+      - name: Detect changed paths
         id: filter
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        with:
-          filters: .github/filters.yaml
-      - name: Compute effective changes
-        id: expand
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            printf 'go=true\ndocker=true\nci=true\ndocs=true\n' >> "$GITHUB_OUTPUT"
-          else
-            printf 'go=%s\ndocker=%s\nci=%s\ndocs=%s\n' \
-              "${{ steps.filter.outputs.go }}" \
-              "${{ steps.filter.outputs.docker }}" \
-              "${{ steps.filter.outputs.ci }}" \
-              "${{ steps.filter.outputs.docs }}" >> "$GITHUB_OUTPUT"
-          fi
+          go=false
+          docker=false
+          ci=false
+          docs=false
+          case "${{ github.event_name }}" in
+            workflow_dispatch)
+              go=true
+              docker=true
+              ci=true
+              docs=true
+              ;;
+            pull_request)
+              base="${{ github.event.pull_request.base.sha }}"
+              for f in $(git diff --name-only "${base}...HEAD"); do
+                case "$f" in
+                  *.go|go.mod|go.sum|Makefile|.golangci.yml) go=true ;;
+                  Dockerfile|.dockerignore) docker=true ;;
+                  .github/*) ci=true ;;
+                  *.md|scripts/check-doc-links.py) docs=true ;;
+                esac
+              done
+              ;;
+            push)
+              for f in $(git diff --name-only "${GITHUB_BEFORE}...HEAD"); do
+                case "$f" in
+                  *.go|go.mod|go.sum|Makefile|.golangci.yml) go=true ;;
+                  Dockerfile|.dockerignore) docker=true ;;
+                  .github/*) ci=true ;;
+                  *.md|scripts/check-doc-links.py) docs=true ;;
+                esac
+              done
+              ;;
+          esac
+          printf 'go=%s\ndocker=%s\nci=%s\ndocs=%s\n' "$go" "$docker" "$ci" "$docs" >> "$GITHUB_OUTPUT"
 
   quality:
     name: Quality
