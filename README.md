@@ -103,4 +103,6 @@ scan, workflow lint, doc-link check, docker builds).
 
 - [SPEC.md](SPEC.md) — application behavior: detection, safety checks, actions, configuration schema, action log.
 - [DOCKER_SPEC.md](DOCKER_SPEC.md) — container packaging, Compose deployment, image tags, and lifecycle.
+- [DRYRUN_VALIDATION.md](DRYRUN_VALIDATION.md) — runbook for collecting and interpreting dry-run logs to validate decisions before enabling automation.
+- [DRYRUN_DATA_CONTRIB.md](DRYRUN_DATA_CONTRIB.md) — contributor quick start for running dry-run against your own Sonarr, capturing logs, and submitting anonymized samples for analysis and tuning.
 - [CHANGELOG.md](CHANGELOG.md) — release history.
