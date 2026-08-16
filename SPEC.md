@@ -481,13 +481,22 @@ languages). The resolution therefore does **more work than removal**:
 
 1. **Preview** the download (read-only; also performed in dry-run so the
    recommendation names the exact outcome).
-2. **Import** when a preview file has matched episodes: a `ManualImport`
-   command is submitted with Sonarr's own quality, languages, and episode
-   IDs plus the series ID of the matched episode (fetched from Sonarr), and
-   the import is proven by the queue poll (SPEC §3.2). No custom-format
-   upgrade gate applies — this is exactly the UI's manual Import button.
-3. **Fallback removal** only when the preview finds no series match or
-   fails: the item is removed from the queue (`DELETE /api/v3/queue/{id}`).
+2. **Honor Sonarr's input about the file**: the preview reports the matched
+   file's `rejections` (e.g. "Not an upgrade for existing episode file(s)",
+   custom-format score below the cutoff). A rejected file is **not**
+   force-imported — forcing the ManualImport command would override the
+   episode's quality/custom-format decisions and could downgrade an episode
+   that already has a better file. When several files are matched, a
+   rejection-free one is preferred.
+3. **Import** when a rejection-free preview file has matched episodes: a
+   `ManualImport` command is submitted with Sonarr's own quality, languages,
+   and episode IDs plus the series ID of the matched episode (fetched from
+   Sonarr), and the import is proven by the queue poll (SPEC §3.2). No
+   custom-format upgrade gate applies — this is exactly the UI's manual
+   Import button.
+4. **Fallback removal** when the preview finds no series match, fails, or the
+   matched file carries an import rejection: the item is removed from the
+   queue (`DELETE /api/v3/queue/{id}`) and the blocker's reasons are logged.
    Blocklisting is not attempted: with no series identity, no grabbed
    history can be located.
 

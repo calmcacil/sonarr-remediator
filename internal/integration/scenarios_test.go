@@ -1429,3 +1429,134 @@ func TestScenarioUnknownSeriesNoMatchRemoves(t *testing.T) {
 		t.Fatalf("message = %q, want the fallback reason logged", msg)
 	}
 }
+// rejectedUnknownSeriesPreview is a preview file Sonarr matched but then
+// rejected, e.g. because the episode already has a better file or the
+// release misses the custom-format cutoff.
+func rejectedUnknownSeriesPreview(path string, episodes []types.EpisodeLookup) types.ManualImportFile {
+	season := 1
+	return types.ManualImportFile{
+		Path:         path,
+		Name:         path[strings.LastIndex(path, "/")+1:],
+		Quality:      types.QualityModel{Quality: types.Quality{ID: 3, Name: "WEBRip-1080p"}},
+		Languages:    []types.LanguageModel{{ID: 8, Name: "Japanese"}},
+		SeasonNumber: &season,
+		Episodes:     episodes,
+		Rejections: []types.ImportRejection{{
+			Type:   "permanent",
+			Reason: "Not an upgrade for existing episode file(s)",
+		}},
+	}
+}
+
+// TestScenarioUnknownSeriesRejectedImportRemoves: Sonarr's preview says the
+// file must not be imported (blocker) — the import is not forced; the item
+// falls back to removal with the reason logged.
+func TestScenarioUnknownSeriesRejectedImportRemoves(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+
+	item := unknownSeriesItem()
+	m.SetQueue(item)
+	m.SetManualImportPreview(rejectedUnknownSeriesPreview(
+		"/staging/torboxarr/completed/sonarr/hash/[Erai-raws] Mao - 20.mkv",
+		[]types.EpisodeLookup{{ID: 45302, EpisodeNumber: 20, SeasonNumber: 1}},
+	))
+	m.SetEpisode(45302, types.EpisodeResource{ID: 45302, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 20, HasFile: true, EpisodeFileID: 7})
+	m.SetEpisodeFile(7, types.EpisodeFileResource{ID: 7, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 20, Quality: "Bluray-1080p"})
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, item, nil)
+	mustApproved(t, dec)
+
+	if n := len(m.Posts()); n != 0 {
+		t.Fatalf("posts = %d, want 0 (a blocked import must not be forced)", n)
+	}
+	mut := singleMutation(t, m)
+	if mut.Method != http.MethodDelete || mut.Path != "/api/v3/queue/450" {
+		t.Fatalf("expected DELETE /api/v3/queue/450 fallback, got %s %s", mut.Method, mut.Path)
+	}
+	recs := logsWithEvent(t, p, "action.taken")
+	if len(recs) != 1 {
+		t.Fatalf("action.taken logs = %d, want 1", len(recs))
+	}
+	msg, _ := recs[0]["msg"].(string)
+	if !strings.Contains(msg, "Sonarr blocked the import") || !strings.Contains(msg, "Not an upgrade for existing episode file(s)") {
+		t.Fatalf("message = %q, want the rejection reason logged", msg)
+	}
+}
+
+// TestScenarioUnknownSeriesRejectedImportDryRun: dry-run logs the fallback
+// removal with the blocker and mutates nothing.
+func TestScenarioUnknownSeriesRejectedImportDryRun(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = true
+
+	item := unknownSeriesItem()
+	m.SetQueue(item)
+	m.SetManualImportPreview(rejectedUnknownSeriesPreview(
+		"/staging/torboxarr/completed/sonarr/hash/[Erai-raws] Mao - 20.mkv",
+		[]types.EpisodeLookup{{ID: 45302, EpisodeNumber: 20, SeasonNumber: 1}},
+	))
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, item, nil)
+	mustApproved(t, dec)
+
+	noMutations(t, m)
+	recs := logsWithEvent(t, p, "action.recommended")
+	if len(recs) != 1 {
+		t.Fatalf("action.recommended logs = %d, want 1", len(recs))
+	}
+	msg, _ := recs[0]["msg"].(string)
+	if !strings.Contains(msg, "Sonarr blocked the import") {
+		t.Fatalf("message = %q, want the blocker reported in dry-run", msg)
+	}
+}
+
+// TestScenarioUnknownSeriesPrefersCleanFile: several matched files, one with
+// a rejection — the clean file is imported, not the rejected one.
+func TestScenarioUnknownSeriesPrefersCleanFile(t *testing.T) {
+	m := NewMockSonarr()
+	defer m.Close()
+	cfg := config.Defaults()
+	cfg.DryRun = false
+
+	item := unknownSeriesItem()
+	m.SetQueue(item)
+	season := 1
+	m.SetManualImportPreview(
+		rejectedUnknownSeriesPreview(
+			"/staging/torboxarr/completed/sonarr/hash/[Erai-raws] Mao - 20.mkv",
+			[]types.EpisodeLookup{{ID: 45302, EpisodeNumber: 20, SeasonNumber: 1}},
+		),
+		types.ManualImportFile{
+			Path:         "/staging/torboxarr/completed/sonarr/hash/[Erai-raws] Mao - 20 [v2].mkv",
+			Name:         "[Erai-raws] Mao - 20 [v2].mkv",
+			Quality:      types.QualityModel{Quality: types.Quality{ID: 3, Name: "WEBRip-1080p"}},
+			Languages:    []types.LanguageModel{{ID: 8, Name: "Japanese"}},
+			SeasonNumber: &season,
+			Episodes:     []types.EpisodeLookup{{ID: 45302, EpisodeNumber: 20, SeasonNumber: 1}},
+		},
+	)
+	m.SetEpisode(45302, types.EpisodeResource{ID: 45302, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 20, HasFile: false})
+
+	p := newPipeline(t, m, cfg)
+	dec := mustProcess(t, p, item, nil)
+	mustApproved(t, dec)
+
+	posts := m.Posts()
+	if len(posts) != 1 {
+		t.Fatalf("posts = %d, want 1", len(posts))
+	}
+	req := importCommandBody(t, posts[0])
+	if !strings.Contains(req.Files[0].Path, "[v2]") {
+		t.Fatalf("imported path = %q, want the clean file, not the rejected one", req.Files[0].Path)
+	}
+	if n := len(m.Deletes()); n != 0 {
+		t.Fatalf("deletes = %d, want 0 (the clean file was imported)", n)
+	}
+}

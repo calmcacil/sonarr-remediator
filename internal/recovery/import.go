@@ -219,14 +219,24 @@ func SelectPreviewFile(files []types.ManualImportFile, item types.QueueItem) *ty
 // SelectPreviewMatched picks the first preview file Sonarr matched to real
 // episodes. Used for items with no series identity (unknown-series
 // resolution, SPEC §3.10): there is no queue-item episode to anchor on, so a
-// file without matched episodes cannot be imported.
+// file without matched episodes cannot be imported. Files Sonarr rejected
+// are avoided when a clean match exists; when every matched file carries a
+// rejection, the first rejected one is returned so the caller can report the
+// blocker and fall back instead of forcing the import.
 func SelectPreviewMatched(files []types.ManualImportFile) *types.ManualImportFile {
+	var rejected *types.ManualImportFile
 	for i := range files {
-		if len(files[i].Episodes) > 0 {
+		if len(files[i].Episodes) == 0 {
+			continue
+		}
+		if len(files[i].Rejections) == 0 {
 			return &files[i]
 		}
+		if rejected == nil {
+			rejected = &files[i]
+		}
 	}
-	return nil
+	return rejected
 }
 
 // evaluatePreview scores a previewed file against the expected episode

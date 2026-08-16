@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
 	"github.com/calmcacil/sonarr-remediator/internal/recovery"
@@ -131,6 +132,14 @@ func (e *Executor) resolveUnknownSeries(ctx context.Context, decision types.Deci
 	if file == nil {
 		return e.removeUnknownSeriesFallback(ctx, decision, id, "manual-import preview found no series match")
 	}
+	// Sonarr's input about the file is authoritative: a rejection (e.g. "Not
+	// an upgrade for existing episode file(s)", custom-format score below
+	// minimum) means the file must not be imported — forcing the ManualImport
+	// command would override the episode's quality/custom-format decisions.
+	// The item falls back to removal with the reasons logged.
+	if len(file.Rejections) > 0 {
+		return e.removeUnknownSeriesFallback(ctx, decision, id, "Sonarr blocked the import: "+rejectionText(file.Rejections))
+	}
 
 	episodeIDs := make([]int, 0, len(file.Episodes))
 	for _, ep := range file.Episodes {
@@ -181,6 +190,15 @@ func (e *Executor) resolveUnknownSeries(ctx context.Context, decision types.Deci
 	e.logger.Info("auto-imported "+file.Path+" (unknown-series manual import)",
 		append(attrs, "candidate_path", file.Path, "episodes", episodeIDs, "action", string(types.ActionManualImport))...)
 	return nil
+}
+
+// rejectionText flattens preview rejection reasons for logging.
+func rejectionText(rejections []types.ImportRejection) string {
+	parts := make([]string, 0, len(rejections))
+	for _, r := range rejections {
+		parts = append(parts, r.Reason)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // removeUnknownSeriesFallback logs the fallback removal (recommended in

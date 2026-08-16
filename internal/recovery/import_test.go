@@ -675,6 +675,31 @@ func TestSelectPreviewFile(t *testing.T) {
 	}
 }
 
+// ─── SelectPreviewMatched ─────────────────────────────────────────────
+
+func TestSelectPreviewMatched(t *testing.T) {
+	clean := types.ManualImportFile{Path: "/downloads/Clean.mkv", Episodes: []types.EpisodeLookup{{ID: 1}}}
+	rejected := types.ManualImportFile{Path: "/downloads/Rejected.mkv", Episodes: []types.EpisodeLookup{{ID: 2}},
+		Rejections: []types.ImportRejection{{Type: "permanent", Reason: "Not an upgrade for existing episode file(s)"}}}
+	unmatched := types.ManualImportFile{Path: "/downloads/Unmatched.mkv"}
+
+	if got := SelectPreviewMatched(nil); got != nil {
+		t.Errorf("SelectPreviewMatched(empty) = %+v, want nil", got)
+	}
+	if got := SelectPreviewMatched([]types.ManualImportFile{unmatched}); got != nil {
+		t.Errorf("SelectPreviewMatched(unmatched) = %+v, want nil", got)
+	}
+	// A clean match is preferred over a rejected one.
+	if got := SelectPreviewMatched([]types.ManualImportFile{rejected, clean}); got == nil || got.Path != clean.Path {
+		t.Errorf("SelectPreviewMatched = %+v, want the clean file", got)
+	}
+	// All-rejected: the first rejected file is returned so the caller can
+	// report the blocker and fall back.
+	if got := SelectPreviewMatched([]types.ManualImportFile{rejected}); got == nil || got.Path != rejected.Path {
+		t.Errorf("SelectPreviewMatched(all rejected) = %+v, want the rejected file", got)
+	}
+}
+
 // ─── SubmitAndWait ───────────────────────────────────────────────────
 
 func importCmd() types.ManualImportCommand {
