@@ -3,9 +3,8 @@
 This specification covers everything container-specific about Sonarr Recovery
 Agent: how it is built, how it runs, how it is deployed next to Sonarr, and
 how it is updated. Application behavior — detection, safety, actions, config
-schema, action log — lives in [SPEC.md](SPEC.md). The two documents share the
-same contract: no production testing until all features described here are
-implemented.
+schema, action log — lives in [SPEC.md](SPEC.md). The two documents describe
+the current v0.4.0 (alpha) release.
 
 The packaging follows the conventions of the sibling sidecar project
 [`calmcacil/sonarr-anime-bridge`](https://github.com/calmcacil/sonarr-anime-bridge):
