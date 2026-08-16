@@ -20,17 +20,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      go: ${{ steps.expand.outputs.go }}
-      docker: ${{ steps.expand.outputs.docker }}
-      ci: ${{ steps.expand.outputs.ci }}
-      docs: ${{ steps.expand.outputs.docs }}
+      go: ${{ steps.filter.outputs.go }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
-      - name: Compute effective changes
-        id: expand
-        shell: bash
-        run: |
-          printf 'go=true\ndocker=true\nci=true\ndocs=true\n' >> "$GITHUB_OUTPUT"
-
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          filters: |
+            go:
+              - '**/*.go'
+            docs:
+              - '**/*.md'
   quality:
     name: Quality
     runs-on: ubuntu-latest
