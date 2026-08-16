@@ -140,7 +140,7 @@ func (p *pipeline) process(ctx context.Context, item types.QueueItem, history []
 
 // ─── log helpers ──────────────────────────────────────────────────────
 
-// logLines parses the JSON log buffer into records.
+// logLines parses the key=value text log buffer into records.
 func logLines(t *testing.T, p *pipeline) []map[string]any {
 	t.Helper()
 	var out []map[string]any
@@ -149,25 +149,107 @@ func logLines(t *testing.T, p *pipeline) []map[string]any {
 		if line == "" {
 			continue
 		}
-		var rec map[string]any
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Fatalf("invalid log line %q: %v", line, err)
-		}
-		out = append(out, rec)
+		out = append(out, decodeLogLine(t, line))
 	}
 	return out
 }
 
-// logsWithEvent returns the records carrying the given event field.
+// logsWithEvent returns the records carrying the given type field (the
+// event name renders as type= in the log output).
 func logsWithEvent(t *testing.T, p *pipeline, event string) []map[string]any {
 	t.Helper()
 	var out []map[string]any
 	for _, rec := range logLines(t, p) {
-		if ev, _ := rec["event"].(string); ev == event {
+		if ev, _ := rec["type"].(string); ev == event {
 			out = append(out, rec)
 		}
 	}
 	return out
+}
+
+// decodeLogLine parses one key=value text log line into a map, converting
+// quoted strings, booleans, numbers, and JSON array/object values.
+func decodeLogLine(t *testing.T, line string) map[string]any {
+	t.Helper()
+	out := map[string]any{}
+	for _, token := range tokenizeLogLine(line) {
+		eq := strings.Index(token, "=")
+		if eq <= 0 || eq == len(token)-1 {
+			continue
+		}
+		raw := token[eq+1:]
+		var v any
+		switch {
+		case strings.HasPrefix(raw, `"`) || strings.HasPrefix(raw, `'`):
+			if unq, err := strconv.Unquote(raw); err == nil {
+				v = unq
+			} else {
+				v = raw[1 : len(raw)-1]
+			}
+		case raw == "true":
+			v = true
+		case raw == "false":
+			v = false
+		case strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "["):
+			if err := json.Unmarshal([]byte(raw), &v); err != nil {
+				t.Fatalf("log field %q is not valid JSON: %v (%s)", token, err, line)
+			}
+		default:
+			if f, err := strconv.ParseFloat(raw, 64); err == nil && strings.ContainsAny(raw, "0123456789") {
+				v = f
+			} else {
+				v = raw
+			}
+		}
+		out[token[:eq]] = v
+	}
+	return out
+}
+
+// tokenizeLogLine splits on unquoted spaces, keeping quoted strings and
+// JSON array/object values (bracket depth) as single tokens.
+func tokenizeLogLine(line string) []string {
+	var tokens []string
+	var cur strings.Builder
+	quote := byte(0)
+	depth := 0
+	flush := func() {
+		if cur.Len() > 0 {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && i+1 < len(line) {
+				cur.WriteByte(c)
+				cur.WriteByte(line[i+1])
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			cur.WriteByte(c)
+		case c == '"' || c == '\'':
+			quote = c
+			cur.WriteByte(c)
+		case c == '{' || c == '[':
+			depth++
+			cur.WriteByte(c)
+		case c == '}' || c == ']':
+			depth--
+			cur.WriteByte(c)
+		case c == ' ' && depth == 0:
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return tokens
 }
 
 // waitFor polls cond until it is true or the timeout elapses. Bounded polling

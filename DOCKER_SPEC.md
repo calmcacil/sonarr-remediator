@@ -32,7 +32,7 @@ tracks, and external update/rollback.
 | Property | Value |
 |---|---|
 | Role | Sidecar container running beside Sonarr in the same Compose project/network |
-| Interface | None inbound — no HTTP server, no ports, no metrics endpoint; stdout JSON logs are the only surface (`docker logs`) |
+| Interface | None inbound — no HTTP server, no ports, no metrics endpoint; stderr key=value text logs are the only surface (`docker logs`) |
 | State | Stateless container — all state is in memory; nothing is written anywhere |
 | Filesystem | Read-only: the container root FS and both mounts are read-only |
 | Runtime user | Rootless non-root (image default 65532:65532; Compose overrides with `PUID`/`PGID`) |
@@ -245,15 +245,15 @@ Dependabot, or GitOps automation. To roll back, pin the previous exact tag.
 ## 8. Lifecycle & Graceful Shutdown
 
 The agent handles `SIGTERM`/`SIGINT` per SPEC §11: monitors stop, in-flight
-actions drain for up to 30 s, the decision ring buffer is flushed to stdout,
+actions drain for up to 30 s, the decision ring buffer is flushed to stderr,
 then the process exits 0. Compose obligations:
 
 - `stop_grace_period: 30s` (a shorter window risks aborting in-flight
   imports; a second signal forces immediate exit).
 - `restart: unless-stopped` recovers the sidecar after crashes and across
   host reboots.
-- On exit, stdout/stderr are complete: every action and flushed decision was
-  already emitted as a structured log line (SPEC §3.9).
+- On exit, logs are complete: every action and flushed decision was already
+  emitted as a structured key=value log line (SPEC §3.9) on stderr.
 
 ## 9. Hardcoded Container Values
 
@@ -268,7 +268,7 @@ then the process exits 0. Compose obligations:
 | Runtime user | distroless nonroot 65532:65532 (image) / `PUID:PGID` (Compose) |
 | Timezone | UTC only (no tzdata) |
 | CA certificates | bundled (distroless static) |
-| Log output | stdout, JSON (SPEC §9) |
+| Log output | stderr, key=value text (`time= level= type= msg=`, SPEC §9) |
 
 ---
 

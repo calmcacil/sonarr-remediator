@@ -464,17 +464,99 @@ func parseLogs(buf *lockedBuffer) []map[string]any {
 		if line == "" {
 			continue
 		}
-		var m map[string]any
-		if json.Unmarshal([]byte(line), &m) == nil {
-			out = append(out, m)
-		}
+		out = append(out, decodeLogLine(line))
 	}
 	return out
 }
 
+// decodeLogLine parses one key=value text log line into a map, converting
+// quoted strings, booleans, numbers, and JSON array/object values.
+func decodeLogLine(line string) map[string]any {
+	out := map[string]any{}
+	for _, token := range tokenizeLogLine(line) {
+		eq := strings.Index(token, "=")
+		if eq <= 0 || eq == len(token)-1 {
+			continue
+		}
+		raw := token[eq+1:]
+		var v any
+		switch {
+		case strings.HasPrefix(raw, `"`) || strings.HasPrefix(raw, `'`):
+			if unq, err := strconv.Unquote(raw); err == nil {
+				v = unq
+			} else {
+				v = raw[1 : len(raw)-1]
+			}
+		case raw == "true":
+			v = true
+		case raw == "false":
+			v = false
+		case strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "["):
+			if err := json.Unmarshal([]byte(raw), &v); err == nil {
+				out[token[:eq]] = v
+			}
+			continue
+		default:
+			if f, err := strconv.ParseFloat(raw, 64); err == nil && strings.ContainsAny(raw, "0123456789") {
+				v = f
+			} else {
+				v = raw
+			}
+		}
+		out[token[:eq]] = v
+	}
+	return out
+}
+
+// tokenizeLogLine splits on unquoted spaces, keeping quoted strings and
+// JSON array/object values (bracket depth) as single tokens.
+func tokenizeLogLine(line string) []string {
+	var tokens []string
+	var cur strings.Builder
+	quote := byte(0)
+	depth := 0
+	flush := func() {
+		if cur.Len() > 0 {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && i+1 < len(line) {
+				cur.WriteByte(c)
+				cur.WriteByte(line[i+1])
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			cur.WriteByte(c)
+		case c == '"' || c == '\'':
+			quote = c
+			cur.WriteByte(c)
+		case c == '{' || c == '[':
+			depth++
+			cur.WriteByte(c)
+		case c == '}' || c == ']':
+			depth--
+			cur.WriteByte(c)
+		case c == ' ' && depth == 0:
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return tokens
+}
+
 func hasEvent(buf *lockedBuffer, event string) bool {
 	for _, m := range parseLogs(buf) {
-		if m["event"] == event {
+		if m["type"] == event {
 			return true
 		}
 	}
@@ -484,11 +566,11 @@ func hasEvent(buf *lockedBuffer, event string) bool {
 func findEvent(t *testing.T, buf *lockedBuffer, event string) map[string]any {
 	t.Helper()
 	for _, m := range parseLogs(buf) {
-		if m["event"] == event {
+		if m["type"] == event {
 			return m
 		}
 	}
-	t.Fatalf("no log line with event %q; logs:\n%s", event, buf.String())
+	t.Fatalf("no log line with type %q; logs:\n%s", event, buf.String())
 	return nil
 }
 
@@ -578,8 +660,11 @@ func TestExecuteLogOnly(t *testing.T) {
 		t.Fatalf("log_only must not call the API, got %d calls: %v", n, m.requestURIs())
 	}
 	line := findMsg(t, buf, "No action required for queue item 42")
-	if ev, _ := line["event"].(string); ev != "" {
-		t.Fatalf("log_only event = %q, want empty", ev)
+	if ev := line["event"]; ev != nil {
+		t.Fatalf("log_only event field = %v, want consumed into type", ev)
+	}
+	if typ, _ := line["type"].(string); typ == "" {
+		t.Fatalf("log_only type = %v, want non-empty (component fallback)", line["type"])
 	}
 }
 

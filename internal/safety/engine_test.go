@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -901,12 +902,9 @@ func TestRejectionLoggedOnce(t *testing.T) {
 			if len(lines) != 1 {
 				t.Fatalf("log lines = %d, want exactly 1:\n%s", len(lines), buf.String())
 			}
-			var rec map[string]any
-			if err := json.Unmarshal(lines[0], &rec); err != nil {
-				t.Fatalf("log line is not JSON: %v\n%s", err, lines[0])
-			}
-			if rec["event"] != "action.skipped" {
-				t.Fatalf("event = %v, want action.skipped", rec["event"])
+			rec := decodeLogLine(t, string(lines[0]))
+			if rec["type"] != "action.skipped" {
+				t.Fatalf("type = %v, want action.skipped", rec["type"])
 			}
 			if rec["component"] != "safety" {
 				t.Fatalf("component = %v, want safety", rec["component"])
@@ -966,6 +964,91 @@ func nonEmptyLines(b []byte) [][]byte {
 		}
 	}
 	return out
+}
+
+// decodeLogLine parses one key=value text log line into a map, converting
+// quoted strings, booleans, numbers, and JSON array/object values.
+func decodeLogLine(t *testing.T, line string) map[string]any {
+	t.Helper()
+	out := map[string]any{}
+	for _, token := range tokenizeLogLine(line) {
+		eq := strings.Index(token, "=")
+		if eq <= 0 || eq == len(token)-1 {
+			continue
+		}
+		raw := token[eq+1:]
+		var v any
+		switch {
+		case strings.HasPrefix(raw, `"`) || strings.HasPrefix(raw, `'`):
+			if unq, err := strconv.Unquote(raw); err == nil {
+				v = unq
+			} else {
+				v = raw[1 : len(raw)-1]
+			}
+		case raw == "true":
+			v = true
+		case raw == "false":
+			v = false
+		case strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "["):
+			if err := json.Unmarshal([]byte(raw), &v); err != nil {
+				t.Fatalf("log field %q is not valid JSON: %v (%s)", token, err, line)
+			}
+		default:
+			if f, err := strconv.ParseFloat(raw, 64); err == nil && strings.ContainsAny(raw, "0123456789") {
+				v = f
+			} else {
+				v = raw
+			}
+		}
+		out[token[:eq]] = v
+	}
+	return out
+}
+
+// tokenizeLogLine splits on unquoted spaces, keeping quoted strings and
+// JSON array/object values (bracket depth) as single tokens.
+func tokenizeLogLine(line string) []string {
+	var tokens []string
+	var cur strings.Builder
+	quote := byte(0)
+	depth := 0
+	flush := func() {
+		if cur.Len() > 0 {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && i+1 < len(line) {
+				cur.WriteByte(c)
+				cur.WriteByte(line[i+1])
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			cur.WriteByte(c)
+		case c == '"' || c == '\'':
+			quote = c
+			cur.WriteByte(c)
+		case c == '{' || c == '[':
+			depth++
+			cur.WriteByte(c)
+		case c == '}' || c == ']':
+			depth--
+			cur.WriteByte(c)
+		case c == ' ' && depth == 0:
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return tokens
 }
 
 // ─── ring buffer ────────────────────────────────────────────────────────

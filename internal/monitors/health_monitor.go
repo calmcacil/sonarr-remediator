@@ -2,6 +2,7 @@ package monitors
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -37,9 +38,10 @@ func NewHealthMonitor(client *sonarr.Client, cfg *config.Config, engine *safety.
 }
 
 // Run probes Sonarr until ctx is cancelled. Each failure marks the engine
-// down, logs error.sonarr-unreachable, and pauses subsequent probes for the
-// current backoff (1 min, 2 min, ..., max 10 min). A successful probe marks
-// the engine up; the down→up transition is logged once.
+// down, logs error.sonarr-unreachable (or error.sonarr-auth when Sonarr
+// rejects the credentials), and pauses subsequent probes for the current
+// backoff (1 min, 2 min, ..., max 10 min). A successful probe marks the
+// engine up; the down→up transition is logged once.
 func (m *HealthMonitor) Run(ctx context.Context) {
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
@@ -58,15 +60,27 @@ func (m *HealthMonitor) Run(ctx context.Context) {
 
 			st, err := m.client.GetSystemStatus(ctx)
 			if err != nil {
+				if ctx.Err() != nil {
+					return // shutting down; not a probe failure
+				}
 				m.engine.SetSonarrUp(false)
 				nextPoll = now.Add(m.backoff)
 				m.backoff = min(monitorBackoffMax, 2*m.backoff)
-				m.logger.Error(
-					fmt.Sprintf("Sonarr at %s not responding; monitors paused", m.client.BaseURL.String()),
-					"event", "error.sonarr-unreachable",
-					"sonarr_url", m.client.BaseURL.String(),
-					"error", err,
-				)
+				if errors.Is(err, sonarr.ErrAuth) {
+					m.logger.Error(
+						"Sonarr rejected the configured credentials; monitors paused",
+						"event", "error.sonarr-auth",
+						"sonarr_url", m.client.BaseURL.String(),
+						"error", err,
+					)
+				} else {
+					m.logger.Error(
+						fmt.Sprintf("Sonarr at %s not responding; monitors paused", m.client.BaseURL.String()),
+						"event", "error.sonarr-unreachable",
+						"sonarr_url", m.client.BaseURL.String(),
+						"error", err,
+					)
+				}
 				continue
 			}
 

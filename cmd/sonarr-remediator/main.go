@@ -234,9 +234,14 @@ func runHealthcheck(configPath string) int {
 	return 0
 }
 
-// fatal logs one structured error line on stdout with component=main and
-// exits with status 1. Used for failures before the configured logger exists.
+// fatal logs one structured text line on stderr and exits with status 1.
+// Used for failures before the configured logger exists.
 func fatal(msg string, err error) {
-	slog.New(slog.NewJSONHandler(os.Stdout, nil)).Error(msg, "component", "main", "error", err)
+	l, lerr := logging.New("info")
+	if lerr != nil {
+		slog.New(slog.NewTextHandler(os.Stderr, nil)).Error(msg, "component", "main", "error", err)
+		os.Exit(1)
+	}
+	l.Error(msg, "component", "main", "error", err)
 	os.Exit(1)
 }

@@ -2,27 +2,74 @@ package logging
 
 import (
 	"bytes"
-	"encoding/json"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// splitLines splits raw handler output into one decoded JSON object per line.
-func decodeLines(t *testing.T, raw string) []map[string]any {
+// parseLine splits one key=value text line into a map, honoring quoted
+// values. keys() returns the token order for prefix/shape assertions.
+func parseLine(line string) (map[string]string, []string) {
+	m := map[string]string{}
+	var keys []string
+	var tok strings.Builder
+	var inQuote bool
+	tokens := []string{}
+	flush := func() {
+		if tok.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, tok.String())
+		tok.Reset()
+	}
+	for _, r := range line {
+		switch {
+		case r == '"':
+			inQuote = !inQuote
+			tok.WriteRune(r)
+		case r == ' ' && !inQuote:
+			flush()
+		default:
+			tok.WriteRune(r)
+		}
+	}
+	flush()
+	for _, t := range tokens {
+		eq := strings.Index(t, "=")
+		if eq < 0 {
+			continue
+		}
+		key := t[:eq]
+		val := t[eq+1:]
+		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+			if unq, err := strconv.Unquote(val); err == nil {
+				val = unq
+			}
+		}
+		if _, seen := m[key]; !seen {
+			keys = append(keys, key)
+		}
+		m[key] = val
+	}
+	return m, keys
+}
+
+// decodeLines splits raw handler output into one field map per line.
+func decodeLines(t *testing.T, raw string) []map[string]string {
 	t.Helper()
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}
-	var out []map[string]any
+	var out []map[string]string
 	for _, line := range strings.Split(raw, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		var m map[string]any
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			t.Fatalf("handler emitted invalid JSON %q: %v", line, err)
+		m, _ := parseLine(line)
+		if len(m) == 0 {
+			t.Fatalf("unparseable log line %q", line)
 		}
 		out = append(out, m)
 	}
@@ -95,7 +142,7 @@ func TestParseLevel(t *testing.T) {
 	}
 }
 
-func TestNewWriterJSONShape(t *testing.T) {
+func TestLineShape(t *testing.T) {
 	var buf bytes.Buffer
 	logger, err := NewWriter(&buf, "info")
 	if err != nil {
@@ -113,18 +160,21 @@ func TestNewWriterJSONShape(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected exactly 1 log line, got %d: %q", len(lines), buf.String())
 	}
-	m := lines[0]
 
-	// slog JSON handler key names: "time" is the timestamp, "msg" the message.
-	requiredKeys := []string{"time", "level", "msg", "component", "event", "item", "action", "dry_run"}
-	for _, k := range requiredKeys {
-		if _, ok := m[k]; !ok {
-			t.Errorf("decoded log missing key %q; got %v", k, m)
+	_, keys := parseLine(strings.TrimSpace(buf.String()))
+	wantOrder := []string{"time", "level", "type", "msg"}
+	for i, k := range wantOrder {
+		if i >= len(keys) || keys[i] != k {
+			t.Fatalf("line prefix = %v, want %v\n%s", keys, wantOrder, buf.String())
 		}
 	}
 
+	m := lines[0]
 	if m["level"] != "INFO" {
 		t.Errorf("level = %v, want INFO", m["level"])
+	}
+	if m["type"] != "action.taken" {
+		t.Errorf("type = %v, want action.taken", m["type"])
 	}
 	if m["msg"] != "Removed queue item 420" {
 		t.Errorf("msg = %v, want %q", m["msg"], "Removed queue item 420")
@@ -132,8 +182,8 @@ func TestNewWriterJSONShape(t *testing.T) {
 	if m["component"] != "executor" {
 		t.Errorf("component = %v, want executor", m["component"])
 	}
-	if m["event"] != "action.taken" {
-		t.Errorf("event = %v, want action.taken", m["event"])
+	if _, dup := m["event"]; dup {
+		t.Errorf("event should be consumed into type=, got %v", m)
 	}
 	if m["item"] != "42:105:abc123" {
 		t.Errorf("item = %v, want 42:105:abc123", m["item"])
@@ -141,8 +191,87 @@ func TestNewWriterJSONShape(t *testing.T) {
 	if m["action"] != "remove_queue" {
 		t.Errorf("action = %v, want remove_queue", m["action"])
 	}
-	if dry, ok := m["dry_run"].(bool); !ok || dry {
-		t.Errorf("dry_run = %v (%T), want boolean false", m["dry_run"], m["dry_run"])
+	if m["dry_run"] != "false" {
+		t.Errorf("dry_run = %v, want false", m["dry_run"])
+	}
+}
+
+func TestTypeDerivation(t *testing.T) {
+	tests := []struct {
+		name string
+		log  func(*slog.Logger)
+		want string
+	}{
+		{
+			name: "event beats component",
+			log:  func(l *slog.Logger) { l.With("component", "executor").Info("m", "event", "action.taken") },
+			want: "action.taken",
+		},
+		{
+			name: "component fallback",
+			log:  func(l *slog.Logger) { l.With("component", "queue_monitor").Info("m") },
+			want: "queue_monitor",
+		},
+		{
+			name: "explicit type beats event",
+			log:  func(l *slog.Logger) { l.Info("m", "type", "resolver", "event", "action.taken") },
+			want: "resolver",
+		},
+		{
+			name: "no type, event, or component",
+			log:  func(l *slog.Logger) { l.Info("m") },
+			want: "log",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger, err := NewWriter(&buf, "debug")
+			if err != nil {
+				t.Fatalf("NewWriter: %v", err)
+			}
+			tt.log(logger)
+			lines := decodeLines(t, buf.String())
+			if len(lines) != 1 {
+				t.Fatalf("expected 1 line, got %d: %q", len(lines), buf.String())
+			}
+			if lines[0]["type"] != tt.want {
+				t.Errorf("type = %v, want %v", lines[0]["type"], tt.want)
+			}
+		})
+	}
+}
+
+func TestValueRendering(t *testing.T) {
+	var buf bytes.Buffer
+	logger, err := NewWriter(&buf, "debug")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	logger.With("component", "recovery").Info("m",
+		"int", 42,
+		"bool", true,
+		"float", 3.5,
+		"candidate_path", "path with spaces/file.mp4",
+		"nested", map[string]any{"tvdb": 90, "season": 1},
+	)
+
+	m := decodeLines(t, buf.String())[0]
+	if m["int"] != "42" {
+		t.Errorf("int = %v, want 42", m["int"])
+	}
+	if m["bool"] != "true" {
+		t.Errorf("bool = %v, want true", m["bool"])
+	}
+	if m["float"] != "3.5" {
+		t.Errorf("float = %v, want 3.5", m["float"])
+	}
+	if m["candidate_path"] != "path with spaces/file.mp4" {
+		t.Errorf("quoted value = %v, want %q", m["candidate_path"], "path with spaces/file.mp4")
+	}
+	if !strings.Contains(buf.String(), `nested={`) {
+		t.Errorf("nested value not JSON-encoded in line: %q", buf.String())
 	}
 }
 
@@ -204,8 +333,8 @@ func TestLevelFilteringDebug(t *testing.T) {
 }
 
 func TestEventNamesRoundTrip(t *testing.T) {
-	// SPEC §9 action log events: event name must survive the JSON round-trip
-	// exactly, each at its documented level.
+	// SPEC §9 action log events: the event name must render exactly as the
+	// type= token, each at its documented level.
 	events := []struct {
 		name  string
 		level slog.Level
@@ -231,8 +360,8 @@ func TestEventNamesRoundTrip(t *testing.T) {
 			if len(lines) != 1 {
 				t.Fatalf("expected 1 line, got %d: %q", len(lines), buf.String())
 			}
-			if lines[0]["event"] != ev.name {
-				t.Errorf("event = %v (%T), want exact string %q", lines[0]["event"], lines[0]["event"], ev.name)
+			if lines[0]["type"] != ev.name {
+				t.Errorf("type = %v (%T), want exact string %q", lines[0]["type"], lines[0]["type"], ev.name)
 			}
 			if lines[0]["msg"] != ev.msg {
 				t.Errorf("msg = %v, want %q", lines[0]["msg"], ev.msg)
@@ -272,22 +401,22 @@ func TestDryRunMessageShapes(t *testing.T) {
 	}
 
 	rec := lines[0]
-	if rec["event"] != "action.recommended" {
-		t.Errorf("first line event = %v, want action.recommended", rec["event"])
+	if rec["type"] != "action.recommended" {
+		t.Errorf("first line type = %v, want action.recommended", rec["type"])
 	}
-	if dry, ok := rec["dry_run"].(bool); !ok || !dry {
-		t.Errorf("first line dry_run = %v (%T), want boolean true", rec["dry_run"], rec["dry_run"])
+	if rec["dry_run"] != "true" {
+		t.Errorf("first line dry_run = %v, want true", rec["dry_run"])
 	}
 	if rec["msg"] != "Would have removed queue item 420" {
 		t.Errorf("first line msg = %v, want %q", rec["msg"], "Would have removed queue item 420")
 	}
 
 	taken := lines[1]
-	if taken["event"] != "action.taken" {
-		t.Errorf("second line event = %v, want action.taken", taken["event"])
+	if taken["type"] != "action.taken" {
+		t.Errorf("second line type = %v, want action.taken", taken["type"])
 	}
-	if dry, ok := taken["dry_run"].(bool); !ok || dry {
-		t.Errorf("second line dry_run = %v (%T), want boolean false", taken["dry_run"], taken["dry_run"])
+	if taken["dry_run"] != "false" {
+		t.Errorf("second line dry_run = %v, want false", taken["dry_run"])
 	}
 	if taken["msg"] != "Removed queue item 420" {
 		t.Errorf("second line msg = %v, want %q", taken["msg"], "Removed queue item 420")
