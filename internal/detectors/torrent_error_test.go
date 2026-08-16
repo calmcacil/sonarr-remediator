@@ -78,13 +78,39 @@ func TestTorrentErrorDetectorSkipsWithoutSignature(t *testing.T) {
 
 func TestTorrentErrorDetectorSkipsNonWarningStatus(t *testing.T) {
 	item := qbitErrorItem()
-	item.TrackedDownloadStatus = "error" // different signature
+	item.Status = "downloading" // different signature
 	iss, err := detectTorrentError(t, torrentErrorCfg(), item)
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
 	if iss != nil {
-		t.Fatalf("issue = %+v, want nil when trackedDownloadStatus is not warning", iss)
+		t.Fatalf("issue = %+v, want nil when queue status is not warning", iss)
+	}
+}
+
+func TestTorrentErrorDetectorIgnoresTrackedStatus(t *testing.T) {
+	item := qbitErrorItem()
+	item.TrackedDownloadStatus = "ok"
+	iss, err := detectTorrentError(t, torrentErrorCfg(), item)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if iss == nil {
+		t.Fatal("issue = nil, want detection from queue warning and error text")
+	}
+}
+
+func TestTorrentErrorDetectorMatchesStatusMessageWithNoErrorField(t *testing.T) {
+	item := qbitErrorItem()
+	item.ErrorMessage = ""
+	item.TrackedDownloadStatus = "downloading"
+	item.StatusMessages = []types.StatusMessage{{Title: "Download", Messages: []string{"qBittorrent is reporting an error"}}}
+	iss, err := detectTorrentError(t, torrentErrorCfg(), item)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if iss == nil {
+		t.Fatal("issue = nil, want detection from the status message")
 	}
 }
 

@@ -64,8 +64,8 @@ func NewTorrentErrorDetector(cfg *config.Config, logger *slog.Logger) Detector {
 func (d *TorrentErrorDetector) Name() string { return "torrent_error" }
 
 // Detect implements Detector. Triggers when the item carries the torrent
-// error signature: trackedDownloadStatus "warning" and an error text matching
-// the configured pattern in the error message or status messages.
+// error signature: queue status "warning" and an error text matching the
+// configured pattern in the error message or status messages.
 func (d *TorrentErrorDetector) Detect(ctx context.Context, item types.QueueItem, history []types.HistoryItem, client *sonarr.Client) (*types.Issue, error) {
 	if d.pattern == nil || !IsTorrentErrorSignature(item, d.pattern) {
 		return nil, nil
@@ -85,10 +85,11 @@ func (d *TorrentErrorDetector) Detect(ctx context.Context, item types.QueueItem,
 }
 
 // IsTorrentErrorSignature reports whether the item carries the qBit error
-// state signature: trackedDownloadStatus "warning" and an error text matching
-// pattern in the error message or status messages.
+// state signature: queue status "warning" and an error text matching the
+// pattern in the error message or status messages. Sonarr may leave
+// trackedDownloadStatus as "ok" or "downloading" for this condition.
 func IsTorrentErrorSignature(item types.QueueItem, pattern *regexp.Regexp) bool {
-	if item.TrackedDownloadStatus != "warning" {
+	if item.Status != "warning" {
 		return false
 	}
 	text := item.ErrorMessage

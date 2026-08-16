@@ -201,10 +201,11 @@ func (e *Engine) gatesFor(issue types.Issue) []types.CheckResult {
 		}
 	case types.IssueTorrentError:
 		rule := e.cfg.Automation.RemoveTorrentErrors
+		errorTextPresent := torrentErrorTextPresent(item)
 		return []types.CheckResult{
 			{Check: "rule.enabled", Expected: "true", Actual: strconv.FormatBool(rule.Enabled), Passed: rule.Enabled},
-			{Check: "queue.trackedDownloadStatus", Expected: "warning", Actual: item.TrackedDownloadStatus, Passed: item.TrackedDownloadStatus == "warning"},
-			{Check: "error_message", Expected: "set", Actual: strconv.FormatBool(item.ErrorMessage != ""), Passed: item.ErrorMessage != ""},
+			{Check: "queue.status", Expected: "warning", Actual: item.Status, Passed: item.Status == "warning"},
+			{Check: "error_message", Expected: "set", Actual: strconv.FormatBool(errorTextPresent), Passed: errorTextPresent},
 			e.ageCheck(item, rule.WaitHours),
 			{Check: "queue.trackedDownloadState", Expected: "!= importing", Actual: item.TrackedDownloadState, Passed: item.TrackedDownloadState != "importing"},
 			e.retryCheck(key),
@@ -240,6 +241,18 @@ func (e *Engine) gatesFor(issue types.Issue) []types.CheckResult {
 		// No config-derived gates for unknown/other issue types.
 		return nil
 	}
+}
+
+func torrentErrorTextPresent(item types.QueueItem) bool {
+	if item.ErrorMessage != "" {
+		return true
+	}
+	for _, status := range item.StatusMessages {
+		if len(status.Messages) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // globalConstraints builds the always-enforced checks (SPEC §7), in order:
