@@ -40,7 +40,7 @@ func (d *UnknownSeriesDetector) Detect(ctx context.Context, item types.QueueItem
 	if !IsUnknownSeries(item) || !unknownSeriesEligible(item.Status) {
 		return nil, nil
 	}
-	d.logger.Info("unknown-series download detected",
+	d.logger.Debug("unknown-series download detected",
 		"item", item.CompositeKey(),
 		"release_title", item.Title,
 		"status", item.Status,

@@ -107,7 +107,7 @@ func dataValues(h types.HistoryItem) []string {
 
 // issue assembles the not-custom-format issue and logs the detection.
 func (d *NotCustomFormatDetector) issue(item types.QueueItem, method string, related []types.HistoryItem, matched string, now time.Time) *types.Issue {
-	d.logger.Info("not a custom format upgrade detected", "item", item.CompositeKey(), "method", method)
+	d.logger.Debug("not a custom format upgrade detected", "item", item.CompositeKey(), "method", method)
 	return newIssue(
 		"not_custom_format_"+item.CompositeKey(),
 		types.IssueNotCustomFormat,

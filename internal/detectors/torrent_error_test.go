@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
@@ -46,6 +47,17 @@ func TestTorrentErrorDetectorMatchesErrorMessage(t *testing.T) {
 	}
 	if iss.QueueItem.CompositeKey() != qbitErrorItem().CompositeKey() {
 		t.Errorf("issue item key = %s, want %s", iss.QueueItem.CompositeKey(), qbitErrorItem().CompositeKey())
+	}
+}
+
+func TestTorrentErrorDetectorLogsAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	d := NewTorrentErrorDetector(torrentErrorCfg(), slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	if _, err := d.Detect(context.Background(), qbitErrorItem(), nil, nil); err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if strings.TrimSpace(buf.String()) != "" {
+		t.Fatalf("detector emitted info-level output, want quiet routine detection: %q", buf.String())
 	}
 }
 
