@@ -1,75 +1,114 @@
 # Operational State and Log Noise Plan
 
-## Recommendation
+## Current Status
 
-SQLite can provide useful operational state, but it should not be the first fix
-for the current log volume. The immediate problem is repeated polling output,
-not the absence of a database.
+Phase 1 is complete. Repeated safety skips now use a stable suppression
+identity based on the item, action, and failed check, so changing values such
+as `got 22m0s ago` no longer create a new info-level log record. Routine
+detector matches are debug-level, while action recommendations, actions, and
+skips remain visible at info level.
 
-The service already has short-lived in-memory state for duplicate actions,
-cooldowns, retries, repeated-skip suppression, and a bounded decision ring. The
-first phase should make those existing controls effective and make routine
-detection logs debug-level. Logs should remain the interface for lifecycle
-events, API failures, action attempts, and unexpected errors.
+The next phase should add durable operational state without immediately
+changing how Sonarr mutations are executed.
 
-## Phase 1: Quieter Event Logging
+## Deployment Direction
 
-1. Suppress repeated skips using a stable identity composed of the item,
-   action, and failed check. Do not include the rendered reason because values
-   such as `got 22m0s ago` change on every poll.
-2. Keep the complete reason and checks in the emitted record for diagnostics.
-3. Log routine detector matches at debug level. The meaningful info-level
-   transition is the resulting action recommendation, action, or skip.
-4. Prefer stable cooldown data such as a future eligibility timestamp in a
-   later refinement; elapsed values can remain useful at debug level.
-5. Add regression tests proving that changing cooldown elapsed text does not
-   defeat suppression.
+The observer and action worker should run inside one long-lived Go process in
+one rootless Podman container. They should be separate application components,
+not separate deployed services:
 
-This should reduce an unchanged item from one info line per poll to one initial
-message and, at most, a periodic reminder governed by the suppression window.
+```text
+one sonarr-remediator container
+└── one Go process
+    ├── observer loop
+    │   └── Sonarr reads -> detection -> SQLite
+    ├── worker loop
+    │   └── SQLite claims -> revalidation -> Sonarr writes -> SQLite
+    └── maintenance
+        └── cleanup and expired-claim recovery
+```
 
-## Phase 2: SQLite Operational State
+Do not add a second container, an HTTP endpoint, or a shell-based process
+supervisor for this work. The workload does not justify independent scaling or
+separate service lifecycles.
 
-SQLite is worthwhile when the service needs restart-safe state, a queryable
-list of unresolved issues, action history, or a CLI status view. It should
-complement logs rather than replace them.
+The current read-only container contract will need one narrowly scoped
+writable state mount:
 
-Keep the initial schema small:
+```yaml
+services:
+  sonarr-remediator:
+    image: ghcr.io/calmcacil/sonarr-remediator:latest
+    user: "${PUID:-1000}:${PGID:-1000}"
+    read_only: true
+    volumes:
+      - ./remediator-config:/config:ro
+      - ./data:/data:ro
+      - ./remediator-state:/state
+```
+
+The database should live at `/state/remediator.db`. The host state directory
+must be writable by the configured rootless UID/GID. The root filesystem,
+`/config`, and `/data` remain read-only.
+
+## Phase 2: SQLite Operational State and CLI
+
+Phase 2 should first persist the current workflow while retaining synchronous
+execution:
+
+```text
+poll -> detect -> safety -> execute -> record outcome
+```
+
+This establishes the schema, migrations, retention, reconciliation, volume
+permissions, and CLI behavior before SQLite becomes the execution coordinator.
+
+SQLite should complement logs rather than replace them. Logs remain appropriate
+for lifecycle events, API failures, action attempts, and unexpected errors.
+
+### Initial Schema
+
+Keep current issue state, decisions, and action history distinct:
 
 ```sql
 CREATE TABLE issues (
-    issue_key       TEXT PRIMARY KEY,
-    issue_type      TEXT NOT NULL,
-    item_key        TEXT NOT NULL,
-    queue_item_id   INTEGER,
-    series_id       INTEGER,
-    episode_id      INTEGER,
-    download_id     TEXT,
-    action          TEXT NOT NULL,
-    state           TEXT NOT NULL,
-    blocking_check  TEXT,
-    blocking_reason TEXT,
-    first_seen_at   TEXT NOT NULL,
-    last_seen_at    TEXT NOT NULL,
-    next_action_at  TEXT,
-    resolved_at     TEXT
+    issue_key        TEXT PRIMARY KEY,
+    issue_type       TEXT NOT NULL,
+    item_key         TEXT NOT NULL,
+    queue_item_id    INTEGER,
+    series_id        INTEGER,
+    episode_id       INTEGER,
+    download_id      TEXT,
+    state            TEXT NOT NULL,
+    first_seen_at    TEXT NOT NULL,
+    last_seen_at     TEXT NOT NULL,
+    resolved_at      TEXT,
+    details_json     TEXT NOT NULL
 );
 
-CREATE TABLE actions (
-    id              INTEGER PRIMARY KEY,
-    issue_key       TEXT NOT NULL,
-    action          TEXT NOT NULL,
-    outcome         TEXT NOT NULL,
-    dry_run         INTEGER NOT NULL,
-    reason          TEXT,
-    attempted_at    TEXT NOT NULL,
+CREATE TABLE action_attempts (
+    id               INTEGER PRIMARY KEY,
+    issue_key        TEXT NOT NULL,
+    action           TEXT NOT NULL,
+    outcome          TEXT NOT NULL,
+    dry_run          INTEGER NOT NULL,
+    reason           TEXT,
+    attempted_at     TEXT NOT NULL,
+    completed_at     TEXT,
+    details_json     TEXT,
     FOREIGN KEY (issue_key) REFERENCES issues(issue_key)
 );
 ```
 
-Useful issue states are `observed`, `blocked`, `eligible`, `scheduled`,
-`handled`, `resolved`, and `failed`. Dry-run recommendations must not be
-recorded as handled actions.
+Useful issue states are `active` and `resolved`. Detailed execution states
+belong to action requests in Phase 3 rather than making the issue table a
+workflow engine.
+
+Use schema versioning through `PRAGMA user_version`. Configure SQLite for
+local concurrent daemon/CLI access with WAL mode, foreign keys, and a bounded
+busy timeout. The daemon should initially use one database connection because
+the expected workload is small; CLI commands use a short-lived read
+connection.
 
 ### Reconciliation and Retention
 
@@ -77,37 +116,167 @@ Only reconcile missing issues after a complete, successful queue scan. A queue
 fetch failure, connectivity failure, cancellation, or partially processed poll
 must not resolve everything. Mark absent issues resolved, retain resolved rows
 for a bounded period such as 30 days, and periodically delete old resolved
-issues and action records.
+issues and action attempts.
 
-### CLI
+### CLI Access
 
-Prefer read-only subcommands on the existing executable:
+The CLI should be a subcommand of the existing binary and should open the same
+database without starting monitors:
 
 ```text
-sonarr-remediator status
-sonarr-remediator issues
-sonarr-remediator issues --state blocked
-sonarr-remediator show <issue-key>
-sonarr-remediator actions --since 24h
-sonarr-remediator cleanup
+sonarr-remediator status --config /config/config.yaml
+sonarr-remediator issues --config /config/config.yaml
+sonarr-remediator issues --state active --config /config/config.yaml
+sonarr-remediator show <issue-key> --config /config/config.yaml
+sonarr-remediator actions --since 24h --config /config/config.yaml
 ```
 
-The default output should be a compact table, with `--json` for scripting.
-SQLite should use WAL mode and a busy timeout because the daemon and CLI may
-access the database concurrently. In Docker, put the database under a
-configurable persistent volume such as `/data/sonarr-remediator.db`.
+In production, invoke it through the running rootless container:
 
-### Implementation Sequence
+```bash
+podman exec sonarr-remediator \
+  /sonarr-remediator status --config /config/config.yaml
+```
 
-1. Complete Phase 1 and observe the resulting logs.
-2. Add a narrow domain-specific storage interface.
-3. Add SQLite with schema versioning via `PRAGMA user_version`.
-4. Upsert issue observations during successful scans.
-5. Record safety decisions and action outcomes.
-6. Reconcile absent issues only after successful full scans.
-7. Add read-only status, issues, show, and actions commands.
-8. Add retention cleanup and Docker volume documentation.
+Commands should default to a compact human-readable table and support
+`--json` for scripting. Query commands can use a read-only `/state` mount when
+run as a one-shot container, while cleanup or migrations require a writable
+mount. `podman exec` is the normal path while the daemon is running.
 
-Avoid a generic workflow engine or event-sourcing model. The database should
-track current issue state and action history with as few moving parts as
-possible.
+The CLI should not require an HTTP port, inbound authentication, a shell in the
+distroless image, or elevated Podman permissions.
+
+## Phase 3: Durable Internal Action Worker
+
+After Phase 2 has established reliable persistence, move Sonarr mutations
+behind a durable action queue inside the same process:
+
+```text
+observer -> action_requests table -> internal worker -> Sonarr writes
+```
+
+The observer owns facts and desired actions. The worker owns claims,
+revalidation, Sonarr mutations, verification, retries, and action outcomes.
+Both components log their own events.
+
+### Action Requests
+
+Add a separate request table rather than overloading `issues`:
+
+```sql
+CREATE TABLE action_requests (
+    id               INTEGER PRIMARY KEY,
+    issue_key        TEXT NOT NULL,
+    action           TEXT NOT NULL,
+    state            TEXT NOT NULL,
+    not_before       TEXT NOT NULL,
+    attempt_count    INTEGER NOT NULL DEFAULT 0,
+    claimed_by       TEXT,
+    claim_expires_at TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    completed_at     TEXT,
+    last_error       TEXT,
+    FOREIGN KEY (issue_key) REFERENCES issues(issue_key)
+);
+
+CREATE UNIQUE INDEX one_active_request
+ON action_requests(issue_key, action)
+WHERE state IN ('pending', 'waiting', 'claimed', 'retryable');
+```
+
+Request states should be precise:
+
+```text
+pending
+waiting
+claimed
+succeeded
+retryable
+failed
+cancelled
+recommended
+```
+
+Use `succeeded` rather than `handled`; “handled” is ambiguous between claimed,
+attempted, skipped, and successfully completed.
+
+### Worker Safety
+
+The worker must atomically claim a due request, set a short lease, and commit
+before calling Sonarr. If the process exits, another worker cycle can recover
+expired claims. Even with one worker today, claim semantics should be safe for
+future process separation.
+
+Before every Sonarr mutation, the worker must fetch current state and re-run
+the relevant safety checks. A queued decision can become stale because the
+item may disappear, start importing, acquire a file, or be superseded by a
+newer release.
+
+Each action type needs its own completion rule. Do not mark an action
+successful solely because Sonarr returned HTTP 200 or 202 when the expected
+result can be verified through a later queue or history read.
+
+Cooldowns and retries should become persisted scheduling data:
+
+```text
+state=waiting
+not_before=2026-08-17T12:03:43+02:00
+```
+
+This replaces repeated polling-time rejections with one persisted waiting
+request. Existing retry timers can eventually use the same mechanism, making
+pending retries survive restarts.
+
+Dry-run recommendations must never be executable work. Store them as terminal
+`recommended` records or decision history, and require `dry_run = false` for
+worker claims.
+
+### Internal Loops
+
+The single Go process can use goroutines managed by one root context:
+
+```text
+queue observer
+health monitor
+action worker
+maintenance and retention
+```
+
+The worker should wake through an in-memory notification channel when the
+observer creates work, a timer for the earliest `not_before`, and a modest
+fallback poll for restart resilience. SQLite remains authoritative; the
+notification channel is only an optimization.
+
+Shutdown should stop new scans, stop new claims, allow the current scan and
+in-flight action to finish within the existing timeout, and leave an unfinished
+request recoverable through its lease if the timeout expires.
+
+## Optional Future Phase: Process Separation
+
+Separate `observe` and `work` process modes are not part of the initial Phase 3
+scope. They should only be considered if independent lifecycle management,
+fault isolation, or scaling becomes necessary:
+
+```text
+sonarr-remediator observe
+sonarr-remediator work
+```
+
+If this ever becomes necessary, both processes must use the same local state
+volume and rootless UID/GID. SQLite should not be placed on NFS, SMB, or
+another network filesystem for this purpose. The one-container, one-process
+deployment remains the preferred production model.
+
+## Implementation Sequence
+
+1. Phase 1: reduce repeated polling logs. **Complete.**
+2. Phase 2: add SQLite state, migrations, retention, and read-only CLI queries.
+3. Phase 3: add the internal durable action queue and worker.
+4. Fold cooldown and retry scheduling into persisted requests.
+5. Add verified action outcomes and expired-claim recovery.
+6. Consider separate process modes only if operational needs justify them.
+
+Avoid a generic workflow engine or event-sourcing model. Keep the database
+focused on current issue state, durable action requests, and concise action
+history.
