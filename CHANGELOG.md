@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/calmcacil/sonarr-remediator/compare/v0.5.1...v0.5.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* reduce repeated polling logs ([#13](https://github.com/calmcacil/sonarr-remediator/issues/13)) ([f703eb8](https://github.com/calmcacil/sonarr-remediator/commit/f703eb896cf2a33b0e31b24fda22648e65ca2e75))
+
 ## [0.5.1](https://github.com/calmcacil/sonarr-remediator/compare/v0.5.0...v0.5.1) (2026-08-16)
 
 
