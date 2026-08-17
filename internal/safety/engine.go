@@ -439,11 +439,11 @@ func firstFailure(checks []types.CheckResult) string {
 }
 
 // logSkipped emits the action.skipped info line with the full decision fields.
-// A rejection that repeats for the same item, action, and reason within
-// skipLogWindow is logged at debug instead — the first line already explains
-// why nothing happens, and stuck items would otherwise spam one full line per
-// poll cycle. Decisions are recorded in the ring buffer regardless, so the
-// shutdown flush keeps the complete record.
+// A rejection that repeats for the same item, action, and failed check within
+// skipLogWindow is logged at debug instead. The rendered reason is deliberately
+// excluded from the suppression key because values such as elapsed cooldown
+// time change on every poll. Decisions are recorded in the ring buffer
+// regardless, so the shutdown flush keeps the complete record.
 func (e *Engine) logSkipped(dec types.Decision) {
 	item := dec.Issue.QueueItem
 	decisionID := dec.Issue.ID
@@ -468,7 +468,7 @@ func (e *Engine) logSkipped(dec types.Decision) {
 		"dry_run", dec.DryRun,
 	}
 
-	skipKey := itemActionKey(item, dec.Action) + "|" + dec.Reason
+	skipKey := itemActionKey(item, dec.Action) + "|" + failedCheck(dec.Checks)
 	e.mu.Lock()
 	last, seen := e.lastSkipped[skipKey]
 	now := time.Now()
@@ -483,6 +483,18 @@ func (e *Engine) logSkipped(dec types.Decision) {
 		return
 	}
 	e.logger.Info(msg, attrs...)
+}
+
+// failedCheck returns the first failed safety check. It is stable across polls
+// even when the check's actual value changes, which keeps repeated rejection
+// suppression effective for conditions such as cooldown.
+func failedCheck(checks []types.CheckResult) string {
+	for _, check := range checks {
+		if !check.Passed {
+			return check.Check
+		}
+	}
+	return "unknown"
 }
 
 // checksToLog renders checks as maps so the JSON logger emits lowercase keys

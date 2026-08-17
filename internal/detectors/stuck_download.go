@@ -169,6 +169,6 @@ func (d *StuckDownloadDetector) issue(item types.QueueItem, trigger string, rela
 	for k, v := range extra {
 		details[k] = v
 	}
-	d.logger.Info("stuck download detected", "item", item.CompositeKey(), "trigger", trigger)
+	d.logger.Debug("stuck download detected", "item", item.CompositeKey(), "trigger", trigger)
 	return newIssue("stuck_"+item.CompositeKey(), types.IssueStuckDownload, types.SeverityWarning, item, related, details, now)
 }

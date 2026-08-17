@@ -36,7 +36,7 @@ func (d *ImportRecoveryDetector) Detect(ctx context.Context, item types.QueueIte
 	if len(fails) == 0 {
 		return nil, nil
 	}
-	d.logger.Info("import failure detected", "item", item.CompositeKey(), "history_count", len(fails))
+	d.logger.Debug("import failure detected", "item", item.CompositeKey(), "history_count", len(fails))
 	return newIssue(
 		"import_failed_"+item.CompositeKey(),
 		types.IssueImportFailed,

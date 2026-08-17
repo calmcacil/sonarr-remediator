@@ -70,7 +70,7 @@ func (d *TorrentErrorDetector) Detect(ctx context.Context, item types.QueueItem,
 	if d.pattern == nil || !IsTorrentErrorSignature(item, d.pattern) {
 		return nil, nil
 	}
-	d.logger.Info("torrent client error detected",
+	d.logger.Debug("torrent client error detected",
 		"item", item.CompositeKey(),
 		"error_message", item.ErrorMessage)
 	return newIssue(

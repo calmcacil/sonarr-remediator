@@ -274,7 +274,7 @@ func TestUnknownSeriesCooldownBuckets(t *testing.T) {
 }
 
 // TestRepeatedRejectionsLoggedOnce: an identical rejection for the same item,
-// action, and reason is logged at info only once per window — the debug
+// action, and failed check is logged at info only once per window — the debug
 // repeats are invisible at the default info level (SPEC §9).
 func TestRepeatedRejectionsLoggedOnce(t *testing.T) {
 	e, buf := newEngine(t, nil)
@@ -298,6 +298,38 @@ func TestRepeatedRejectionsLoggedOnce(t *testing.T) {
 	mustEvaluate(t, e, other)
 	if n := strings.Count(buf.String(), "action.skipped"); n != 2 {
 		t.Fatalf("action.skipped info lines = %d, want 2 after a distinct rejection", n)
+	}
+}
+
+// TestChangingRejectionDetailsDoNotDefeatSuppression verifies that dynamic
+// check values, such as elapsed cooldown time, are not part of the skip key.
+func TestChangingRejectionDetailsDoNotDefeatSuppression(t *testing.T) {
+	e, buf := newEngine(t, nil)
+	e.SetSonarrUp(true)
+
+	first := queueItem(nil)
+	second := queueItem(func(q *types.QueueItem) { q.DownloadID = "dl-2" })
+	if dec := mustEvaluate(t, e, issue(types.IssueStuckDownload, first)); !dec.Approved {
+		t.Fatal("initial decision rejected, want approved")
+	}
+
+	// Make the same series/episode cooldown appear to have different elapsed
+	// values on successive polls while keeping the item/action/check stable.
+	setLastAction := func(age time.Duration) {
+		e.mu.Lock()
+		e.lastAction[cooldownKey(second)] = time.Now().Add(-age)
+		e.mu.Unlock()
+	}
+	setLastAction(22 * time.Minute)
+	firstSkip := mustEvaluate(t, e, issue(types.IssueStuckDownload, second))
+	setLastAction(23 * time.Minute)
+	secondSkip := mustEvaluate(t, e, issue(types.IssueStuckDownload, second))
+
+	if firstSkip.Reason == secondSkip.Reason {
+		t.Fatalf("test setup did not produce changing reasons: %q", firstSkip.Reason)
+	}
+	if n := strings.Count(buf.String(), "action.skipped"); n != 1 {
+		t.Fatalf("action.skipped info lines = %d, want 1 for changing cooldown details:\n%s", n, buf.String())
 	}
 }
 
