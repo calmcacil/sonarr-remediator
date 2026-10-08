@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/calmcacil/sonarr-remediator/compare/v0.5.2...v0.5.3) (2026-10-08)
+
+
+### Bug Fixes
+
+* **ci:** repair scheduled security scans ([#19](https://github.com/calmcacil/sonarr-remediator/issues/19)) ([f68fe8c](https://github.com/calmcacil/sonarr-remediator/commit/f68fe8c5c86e29c1a51bb5c857e836f4ff51aef7))
+
 ## [0.5.2](https://github.com/calmcacil/sonarr-remediator/compare/v0.5.1...v0.5.2) (2026-08-17)
 
 
