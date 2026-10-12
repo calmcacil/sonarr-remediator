@@ -214,9 +214,14 @@ Use GitHub's merged-PR/commit association API to find the candidate run, then
 cross-check the receipt. Do not rely on the squash commit having its own CI run
 or accept the latest successful workflow indiscriminately. If several associations
 are ambiguous, fail rather than choose an unrelated proof. Release jobs need
-`contents: read`, `actions: read`, and `checks: read` for gate attribution;
+`contents: read`, `actions: read`, `checks: read` for gate attribution, and
+`pull-requests: read` for merged-PR association;
 only pushing jobs additionally get
 `packages: write`. There is no production secret or contents-write requirement.
+
+Read-only repository API responses omit the administrative merge-method fields.
+Verify squash-only PR protection through the public effective rules for main,
+rather than requiring administrator access or assuming omitted settings.
 
 Each architecture publisher loads its verified OCI archive using rootless Podman
 and checks its configuration identity. Rootless Skopeo `copy --preserve-digests`

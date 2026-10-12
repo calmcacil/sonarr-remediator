@@ -21,6 +21,7 @@ class FakeGitHub:
         self.root = root
         self.receipt = receipt
         self.repository_info = copy.deepcopy(fixtures.REPOSITORY)
+        self.rules = [{"type": "pull_request", "parameters": {"allowed_merge_methods": ["squash"]}}]
         self.pr = copy.deepcopy(fixtures.PR)
         self.run = copy.deepcopy(fixtures.RUN)
         self.jobs = copy.deepcopy(fixtures.JOBS)
@@ -34,6 +35,8 @@ class FakeGitHub:
     def get(self, path):
         if path == "":
             return self.repository_info
+        if path == "rules/branches/main":
+            return self.rules
         if path == "commits/v1.2.3":
             return self.commit
         if path == "compare/" + "e" * 40 + "...main":
@@ -97,6 +100,15 @@ class ReleaseVerificationTests(unittest.TestCase):
         self.assertNotEqual(plan["commit"], plan["source"]["checkout"])
         self.assertEqual(plan["tree"], plan["source"]["tree"])
         self.assertEqual(plan["platforms"]["amd64"]["artifact"]["id"], 101)
+
+    def test_read_only_repository_view_uses_effective_squash_protection(self):
+        for key in ("allow_squash_merge", "allow_merge_commit", "allow_rebase_merge"):
+            self.api.repository_info.pop(key)
+        self.prepare()
+        for rules in ([], [{"type": "pull_request", "parameters": {"allowed_merge_methods": ["squash", "rebase"]}}]):
+            self.api.rules = rules
+            with self.assertRaises(ValueError):
+                self.prepare()
 
     def test_direct_tag_wrong_version_and_unreachable_main_fail(self):
         for target, key, value in ((self.api.pr, "merge_commit_sha", "f" * 40),

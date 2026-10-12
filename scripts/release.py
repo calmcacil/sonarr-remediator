@@ -95,8 +95,11 @@ def prepare(api, event, directory):
     require(repository["id"] == event["repository"]["id"] and repository["full_name"] == api.repository,
             "release is for another repository")
     require(not repository["private"] and repository["default_branch"] == "main", "release requires public repository with main default")
-    require(repository["allow_squash_merge"] is True and repository["allow_merge_commit"] is False and
-            repository["allow_rebase_merge"] is False, "repository must enforce squash-only merges before release")
+    # Merge settings are omitted from read-only repository views; active rules are public.
+    rules = api.get("rules/branches/main")
+    require(isinstance(rules, list) and any(rule["type"] == "pull_request" and
+            rule.get("parameters", {}).get("allowed_merge_methods") == ["squash"] for rule in rules),
+            "main must enforce squash-only PR merges before release")
     commit_data = api.get("commits/" + urllib.parse.quote(tag, safe=""))
     commit = sha(commit_data["sha"])
     require(len(commit_data["parents"]) == 1, "release commit must be a squash merge")
