@@ -16,6 +16,11 @@ compatibility, and no inbound server or direct media/download-client access.
 Go's HTTP, JSON, context, logging, and testing packages cover the core work.
 Rust would also fit, but is not needed to meet these requirements.
 
+The initial service implementation is now present in this checkout. The pinned
+toolchain is Go 1.27.2; SQLite and YAML dependencies are locked in `go.mod` and
+`go.sum`. [VALIDATION.md](../../docs/VALIDATION.md) records the actual verification
+scope, independent review, and platform acceptance still required before release.
+
 [API evidence](evidence/sonarr-v4.0.20/README.md) contains anonymized live
 responses and a [browser trace](evidence/sonarr-v4.0.20/BROWSER_FLOW.md). The
 running version `4.0.20.3014` corresponds to upstream commit
@@ -125,6 +130,13 @@ in policy output. In particular, an accepted preview alone does not prove a
 strict improvement: the captured first browser example has equal current
 quality/revision and score despite zero rejections.
 
+The service additionally requires `upgradeAllowed` for revision replacements,
+requires `preferAndUpgrade` for revision-only improvement, and does not treat a
+revision increase across two grouped-equivalent quality IDs as a revision-only
+upgrade. Policy output states these conservative deferrals. Format scores are
+recomputed against the current profile and must agree with returned scores;
+unknown formats and stale scores defer action.
+
 ### Cleanup and Outcome Verification
 
 Classify only a fixed, source-verified catalog of reasons. Initial unusable
@@ -185,6 +197,13 @@ time, before-state/expected identities, command IDs, and verified/uncertain
 effects. Persist intent and budget atomically before network I/O. A crash
 between intent and response yields uncertainty requiring read-back; it cannot
 prove that the request was not sent.
+
+Schema 1 stores the four logical records as JSON bodies in a SQLite `records`
+table. Required records cannot be missing or null when reopening an initialized
+store. Due timestamps are persisted for stable scheduling. Partial imported
+episode effects are monotonic historical evidence; complete success still needs
+fresh acceptable current files for all targets. Read errors do not bypass the
+verification deadline or erase an already established effect.
 
 Accrue waiting time only between successful eligible observations. Credit at
 most one polling interval per pair; do not credit the interval across process

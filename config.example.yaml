@@ -1,0 +1,30 @@
+sonarr:
+  url: http://sonarr:8989
+  api_key_file: /config/sonarr_api_key
+  timeout: 10s
+dry_run: true
+poll_interval: 60s
+state_path: /state/remediator.db
+recovery:
+  enabled: true
+  wait: 15m
+  max_attempts: 3
+  retry_interval: 15m
+cleanup:
+  enabled: false
+  wait: 6h
+  blocklist: false
+  replacement_search: false
+limits:
+  mutations_per_scan: 1
+  mutations_per_hour: 5
+  episode_cooldown: 30m
+scope:
+  include_series_ids: []
+  exclude_series_ids: []
+  include_download_clients: []
+  exclude_download_clients: []
+logging:
+  level: info
+  format: json
+history_retention: 720h

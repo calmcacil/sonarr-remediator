@@ -1,0 +1,15 @@
+*
+!go.mod
+!go.sum
+!VERSION
+!Containerfile
+!internal
+!internal/**
+!cmd
+!cmd/sonarr-remediator
+!cmd/sonarr-remediator/**
+!cmd/fake-sonarr
+!cmd/fake-sonarr/**
+!scripts
+!scripts/FakeContainerfile
+**/*_test.go

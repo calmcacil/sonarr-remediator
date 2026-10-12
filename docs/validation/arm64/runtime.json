@@ -1,0 +1,24 @@
+{
+  "architecture": "arm64",
+  "rootless": true,
+  "uid": 1000,
+  "podman_version": "5.4.2",
+  "storage_driver": "overlay",
+  "image_config": "sha256:0657a4ae629e4e7a3ab16dcb9cb738637e17e12ef385154a15cee8e041b542a3",
+  "version": "0.1.0",
+  "checks": [
+    "non-root",
+    "private-state",
+    "readonly-root-config",
+    "no-ports-media-socket",
+    "dry-run-zero-mutations",
+    "local-queries",
+    "health",
+    "recommendation-deduplication",
+    "restart-persistence",
+    "bounded-shutdown",
+    "config-permission-failure",
+    "state-permission-failure"
+  ],
+  "shutdown_seconds": 0.213
+}

@@ -1,0 +1,86 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: bash scripts/go-checks.sh
+  podman:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Native rootless build and acceptance
+        env:
+          SRA_ARCHITECTURE: ${{ matrix.architecture }}
+          SRA_REVISION: ${{ github.sha }}
+        run: |
+          test "$(id -u)" != 0
+          python3 -c 'import platform, os; assert {"x86_64":"amd64", "aarch64":"arm64"}[platform.machine()] == os.environ["SRA_ARCHITECTURE"]'
+          podman --cgroup-manager=cgroupfs --events-backend=file info --format json > /tmp/podman-info.json
+          python3 -c 'import json; assert json.load(open("/tmp/podman-info.json"))["host"]["security"]["rootless"]'
+          SRA_BUILD_VERSION=$(cat VERSION)
+          podman --cgroup-manager=cgroupfs --events-backend=file build --format oci -f Containerfile --build-arg VERSION="$SRA_BUILD_VERSION" --build-arg REVISION="$SRA_REVISION" -t localhost/remediator:ci .
+          python3 scripts/podman-smoke.py --image localhost/remediator:ci --architecture "$SRA_ARCHITECTURE"
+          podman --cgroup-manager=cgroupfs --events-backend=file save --format oci-archive -o artifacts/image.oci.tar localhost/remediator:ci
+          python3 scripts/oci-evidence.py platform
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 5
+          if-no-files-found: error
+  gate:
+    name: CI
+    if: always()
+    needs: [go, podman]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Require every prerequisite
+        env:
+          GO_RESULT: ${{ needs.go.result }}
+          PODMAN_RESULT: ${{ needs.podman.result }}
+        run: test "$GO_RESULT" = success && test "$PODMAN_RESULT" = success
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: image-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/amd64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: image-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/arm64
+      - name: Verify archives and receipt
+        env:
+          GO_RESULT: ${{ needs.go.result }}
+          PODMAN_RESULT: ${{ needs.podman.result }}
+        run: python3 scripts/oci-evidence.py gate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/receipt.json
+          retention-days: 5
+          if-no-files-found: error

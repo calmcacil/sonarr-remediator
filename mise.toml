@@ -1,0 +1,28 @@
+[tools]
+go = "1.27.2"
+python = "3.14.8"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+"aqua:rhysd/actionlint" = "1.7.11"
+
+[tasks.check]
+description = "Check formatting, correctness, OCI evidence, CI syntax, and reachable vulnerabilities"
+run = """
+export GOTOOLCHAIN=local
+test "$(go env GOVERSION)" = "go1.27.2"
+test -z "$(gofmt -l cmd internal)"
+go vet ./...
+go test -race ./...
+python scripts/test_oci_evidence.py
+actionlint .github/workflows/ci.yml
+for architecture in amd64 arm64; do
+  GOOS=linux GOARCH="$architecture" govulncheck ./...
+done
+"""
+
+[tasks.test]
+description = "Run the Go regression and integration suite with race detection"
+run = "go test -race ./..."
+
+[tasks.build]
+description = "Build the static application binary"
+run = "CGO_ENABLED=0 go build -trimpath -buildvcs=false -o bin/sonarr-remediator ./cmd/sonarr-remediator"

@@ -1,0 +1,9 @@
+{
+  "manifest": "sha256:b2b75e1036411eaa3b9687ec10018856752691995657600e723f682ae5dcab2a",
+  "config": "sha256:0657a4ae629e4e7a3ab16dcb9cb738637e17e12ef385154a15cee8e041b542a3",
+  "architecture": "arm64",
+  "os": "linux",
+  "version": "0.1.0",
+  "revision": "unknown",
+  "archive_sha256": "4bee4e979acfb765c1a3a139f7217c79d19d1b077e2c9d29fb9e2fae465fb2c5"
+}

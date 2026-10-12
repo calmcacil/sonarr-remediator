@@ -1,0 +1,8 @@
+/bin/
+*.db
+*.db-shm
+*.db-wal
+*.db.lock
+/artifacts/
+/.env
+__pycache__/

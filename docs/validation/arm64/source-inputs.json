@@ -1,0 +1,18 @@
+{
+  "files": {
+    "Containerfile": "2aa500d69a9e469530ae4dab0af1279479eb7fe93e246da849443756810ad84f",
+    "VERSION": "e9dd8507f4bf0c6f42458e41aea833ad0bd3f6127272335eee9bf4d58541ed67",
+    "cmd/sonarr-remediator/main.go": "a726a19b3ccaeb69824ac883ad02100f9b72f8abc246ad14465df0b14bf3dcb8",
+    "go.mod": "a4220ef572b0c9a199812a1995bfd8b51c21eff41070dd639c58b53a666837f9",
+    "go.sum": "dab5070d3ed10514035c4181d4658a8e1068e1b69d5581eb15174522fb00b33b",
+    "internal/config/config.go": "b66e83972d7c103c1dad92199082994856011a90c82a1340e07d458f5c8eeb54",
+    "internal/policy/policy.go": "b69c8f2c7f3cc4df9304b9ecf139756e361d0e3ba5a6e2a2a73b395d71b09a3e",
+    "internal/policy/profile.go": "12e6dee68e31f0cdb42670ae67df655702aaaa42cbbc70e764d5862914282677",
+    "internal/service/service.go": "78966ba7ee6e98f90b18edba721dbb08ed495c57e49020b3736cfbb00ef1de61",
+    "internal/service/verify.go": "f57b617a17e792ef334f5c786c5dbe907044185fe6fc31d9919ffd62061ce954",
+    "internal/sonarr/client.go": "0f76752928dfd9e462c0b52536077c219a686391e5aeae625d3df2d1c617ca0d",
+    "internal/sonarr/types.go": "dbe58e61fca5c11edfecd20041007248b019aa3f2023b50d5cc419cfe89ca87b",
+    "internal/state/state.go": "b65e7460bc53d04651fd72f7f8a66c505327bc18ddca2490c9b3ad23fe6dfe7e"
+  },
+  "input_digest": "61c6637bb7d9410a370bb070676261cd45c4ed8f2fb593b38c175e66a102d607"
+}
