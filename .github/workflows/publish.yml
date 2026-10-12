@@ -1,0 +1,86 @@
+name: Publish Tested Images
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  actions: read
+  checks: read
+concurrency:
+  group: ghcr-sonarr-remediator-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          version: 2026.10.8
+          install_args: python
+      - name: Verify release, merged PR, successful CI, and exact images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mise exec -- python scripts/release.py verify
+  component:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          version: 2026.10.8
+          install_args: python
+      - name: Install digest-preserving transfer tool on disposable runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y skopeo
+          skopeo --version
+      - name: Revalidate evidence and promote the immutable native image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SRA_ARCHITECTURE: ${{ matrix.architecture }}
+        run: mise exec -- python scripts/release.py component --architecture "$SRA_ARCHITECTURE"
+  index:
+    needs: [verify, component]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          version: 2026.10.8
+          install_args: python
+      - name: Publish deterministic index, advance stable latest, verify public pulls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mise exec -- python scripts/release.py index

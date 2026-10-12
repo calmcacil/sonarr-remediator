@@ -15,8 +15,9 @@ repository's CI, Release Please, workflow triggers, protection assumptions, or
 proof artifacts. Repository IDs and workflow identities are part of new evidence
 so a recreated repository cannot silently inherit trust from the old one.
 
-The rewrite checkout starts at `862bec0`. There are no application, Containerfile,
-or workflow implementations yet. Official GitHub documentation confirms native
+The specification was written before application, Containerfile, or workflow
+implementation. The service scaffold is now present, and this implementation
+extends its initial CI/evidence scripts. Official GitHub documentation confirms native
 `ubuntu-24.04-arm` hosted runners, ruleset status-check requirements, and artifact
 retrieval. The GitHub Actions app ID was read as `15368`; verify it during setup
 before binding the required check to that integration.
@@ -65,6 +66,17 @@ identities agree with the intended platform. Dependency/cache keys include
 toolchain, target, and module-lock identities; restored caches never bypass
 checks or substitute a previously built application for changed source.
 
+Implementation uses SHA-pinned `jdx/mise-action` with an explicit mise version,
+and `mise run check`/`mise exec --` for project tooling in all jobs. It is the
+sole intentionally allowlisted third-party action. Renovate's native `mise`
+manager updates runtimes/checkers; grouped Go updates include go.mod and both
+Go Containerfiles. Contract tests fail when their patch versions differ.
+Renovate also updates full action SHAs, workflow mise versions, and image digests.
+All `*Containerfile` names are explicitly matched, including the fake fixture
+and official Renovate validator image. Its validator runs rootlessly from a
+digest-pinned upstream image because installing its npm graph triggered mise's
+provenance-downgrade protection. No trust-policy exemption is configured.
+
 Give Go checks a 15-minute timeout, each native container job 25 minutes, and
 the gate five minutes. Matrix `fail-fast: false` preserves both platform failure
 reports. Failed jobs upload sanitized diagnostics where useful, not a promotion
@@ -86,6 +98,11 @@ application identity as deployment. Rootless Docker's documented equivalent is
 `docker build -f Containerfile`; it is not called from the required workflow.
 Use explicit COPY/build-context exclusions so keys, local state, raw HARs,
 media, test artifacts, and Git credentials cannot enter the production image.
+
+Production CI builds use `--no-cache`: local Podman 5.4.2 reused stale LABEL values
+after revision build-argument changes. Checkout uses depth two to validate both
+merge-ref parents against the event; workflow IDs come from the current run API,
+which also works before the new workflow exists on the default branch.
 
 The smoke harness creates a private Podman network and controlled fake Sonarr
 container. Run the production image with a read-only root, all capabilities
@@ -197,17 +214,23 @@ Use GitHub's merged-PR/commit association API to find the candidate run, then
 cross-check the receipt. Do not rely on the squash commit having its own CI run
 or accept the latest successful workflow indiscriminately. If several associations
 are ambiguous, fail rather than choose an unrelated proof. Release jobs need
-`contents: read` and `actions: read`; only pushing jobs additionally get
+`contents: read`, `actions: read`, and `checks: read` for gate attribution;
+only pushing jobs additionally get
 `packages: write`. There is no production secret or contents-write requirement.
 
 Each architecture publisher loads its verified OCI archive using rootless Podman
-and pushes the same OCI manifest/config/layers. Version-specific component tags
+and checks its configuration identity. Rootless Skopeo `copy --preserve-digests`
+transfers the same OCI manifest/config/layers: Podman 5.4.2 has no preserve-digests
+push option. Skopeo is installed from the disposable runner's Ubuntu repositories,
+with its version logged. Version-specific component tags
 `v<version>-amd64` and `v<version>-arm64` support assembly and are immutable too.
 Preflight existing tags: a matching digest is idempotent, a different digest
 fails. Do not execute the image or rerun the build/test suite during publishing.
 
-After both component digests are verified, a rootless Podman manifest job
-assembles and publishes the multi-platform version index. Persist/report the
+After both component digests are verified, an unprivileged index job asserts
+rootless Podman and publishes canonical OCI index JSON through the registry API.
+Fixed descriptor order and annotations make the expected digest reproducible
+before any write, without tool-generated timestamps or format conversions. Report the
 expected index digest so retries cannot create a different index for an existing
 version tag. The version tag is published only after both architectures exist.
 Before advancing `latest`, compare the already published stable version using
@@ -223,7 +246,8 @@ Initial package creation may require an owner setup step to make it public and
 grant the recreated repository publishing access. Verify anonymous pulls after
 the first release. An existing package may survive repository recreation; do
 not delete it, overwrite immutable versions, or assume the new repository's
-workflow token inherits its access. Production activation is outside publishing.
+workflow token inherits its access. Anonymous verification downloads both platform
+manifests and their config/layer blobs. Production activation is outside publishing.
 
 ### Fresh Repository Setup Order
 
@@ -242,10 +266,12 @@ workflow token inherits its access. Production activation is outside publishing.
 5. Configure GHCR access/visibility and verify an explicit test release's promotion
    without any production deployment or second CI suite.
 
-This task only writes specifications. Creating/remaking the remote repository,
-installing workflows, enforcing settings, and publishing images are later
-implementation/setup actions; deleting the existing repository requires explicit
-authorization for that destructive operation.
+The implementation now includes both workflows, evidence/release validation,
+Renovate, and `.github/repository-policy.json` with a plan/apply/read-back script.
+The script verifies a real emitted CI integration before applying rules and fails
+on overlapping classic or unexpected inherited protection. Remote policy changes
+and publication require operator authorization/setup. No repository recreation
+or deletion is automated; deleting a repository requires explicit authorization.
 
 ## Testing and Validation
 
@@ -265,8 +291,10 @@ and controlled fake API/registry responses validate orchestration; actual native
 rootless runners and a disposable GitHub setup validate platform/rules behavior.
 Passing YAML lint alone is not proof of rootless execution or enforced protection.
 
-No workflows or tests are run by this specification-only task. Record real run
-IDs, evidence digests, runner versions, and read-back rules when implementing.
+Local check results, native arm64 identities, current read-only remote settings,
+and remaining hosted/rules/package acceptance are recorded in
+[docs/CI.md](../../docs/CI.md). Record real hosted run IDs and policy read-back
+when activating the implementation; local evidence is not a promotion receipt.
 
 ## Parallelization
 

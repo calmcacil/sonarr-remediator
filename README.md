@@ -18,6 +18,10 @@ mise run check
 mise run build
 ```
 
+`check` also validates CI/release automation and Renovate configuration using
+rootless Podman. See [CI, releases, and dependency updates](docs/CI.md) for required
+repository policy, five-day image retention, and explicit release publishing.
+
 Copy `config.example.yaml` to a private configuration directory, set `sonarr.url`,
 and place the API key in `sonarr_api_key` inside that directory. Use the
 [rootless Podman instructions](docs/OPERATIONS.md) for deployment and volume

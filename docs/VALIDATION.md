@@ -6,10 +6,10 @@ controlled Sonarr fixtures. No live Sonarr import, removal, blocklist, or search
 was requested.
 
 Development tools are pinned in `mise.toml`: Go 1.27.2, Python 3.14.8,
-govulncheck 1.9.0, and actionlint 1.7.11. Use `mise install` and `mise run check`
-to reproduce the local checks. The existing CI script installs its pinned
-govulncheck through Go; migrating CI tooling installation to mise is separate
-from the validated service implementation.
+govulncheck 1.9.0, actionlint 1.7.11, and gh 2.102.0. Use `mise install` and
+`mise run check` to reproduce the local checks. CI now installs and runs its
+toolchain through mise. [CI validation and setup](CI.md) records release/receipt
+checks, Renovate validation, and remaining hosted acceptance.
 
 ## Verified Locally
 
@@ -80,9 +80,10 @@ source vulnerability checks for both targets, exact OCI artifacts, and an
 always-evaluated `CI` gate that rejects failed/missing/mixed-attempt evidence.
 The workflow has been linted locally; hosted runs have not been requested.
 
-The separately approved GitHub Actions specification includes remote repository
-recreation/ruleset setup and immutable release promotion. Those remote setup and
-publication actions remain a separate delivery task. No remote repository
-settings, release tags, GHCR package, or production deployment were changed.
+The separately approved GitHub Actions specification now has checked-in
+repository-policy setup/read-back tooling and immutable release promotion.
+Hosted execution, policy enforcement, and actual publication remain operational
+acceptance steps. No remote repository settings, release tags, GHCR package,
+or production deployment were changed during local implementation.
 Rootless Docker runtime acceptance is secondary and has not been claimed from
 the Compose configuration check.

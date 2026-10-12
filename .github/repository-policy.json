@@ -1,0 +1,67 @@
+{
+  "repository": {
+    "visibility": "public",
+    "default_branch": "main",
+    "has_issues": true,
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "delete_branch_on_merge": true,
+    "allow_auto_merge": false
+  },
+  "actions": {
+    "enabled": true,
+    "allowed_actions": "selected",
+    "sha_pinning_required": true
+  },
+  "allowed_actions": {
+    "github_owned_allowed": true,
+    "verified_allowed": false,
+    "patterns_allowed": ["jdx/mise-action@*"]
+  },
+  "workflow_permissions": {
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false
+  },
+  "rulesets": [
+    {
+      "name": "main PR and CI",
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
+      "rules": [
+        {"type": "deletion"},
+        {"type": "non_fast_forward"},
+        {"type": "required_linear_history"},
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "allowed_merge_methods": ["squash"]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": true,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [{"context": "CI", "integration_id": 15368}]
+          }
+        }
+      ]
+    },
+    {
+      "name": "immutable release tags",
+      "target": "tag",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+      "rules": [{"type": "update"}, {"type": "deletion"}]
+    }
+  ]
+}
