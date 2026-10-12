@@ -11,23 +11,27 @@ import (
 	"time"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
+	"github.com/calmcacil/sonarr-remediator/internal/control"
 	"github.com/calmcacil/sonarr-remediator/internal/policy"
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	"github.com/calmcacil/sonarr-remediator/internal/state"
 )
 
 type Service struct {
-	Config   config.Config
-	Client   *sonarr.Client
-	Store    *state.Store
-	Log      *slog.Logger
-	previous time.Time
-	Now      func() time.Time
-	sent     int
+	Config    config.Config
+	Client    *sonarr.Client
+	Store     *state.Store
+	Log       *slog.Logger
+	previous  time.Time
+	Now       func() time.Time
+	request   *control.Request
+	report    *control.Report
+	requests  chan manualCall
+	admission chan struct{}
 }
 
 func New(c config.Config, client *sonarr.Client, store *state.Store, log *slog.Logger) *Service {
-	return &Service{Config: c, Client: client, Store: store, Log: log, Now: time.Now}
+	return &Service{Config: c, Client: client, Store: store, Log: log, Now: time.Now, requests: make(chan manualCall, 1), admission: make(chan struct{}, 1)}
 }
 func (s *Service) Run(ctx context.Context) error {
 	st := &s.Store.Data.Status
@@ -45,19 +49,35 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	s.Log.Info("service started", "dry_run", c.DryRun, "recovery", c.Recovery.Enabled, "cleanup_client_deletion", c.Cleanup.Enabled, "blocklist", c.Cleanup.Blocklist, "replacement_search", c.Cleanup.ReplacementSearch)
 	defer func() { st.Ready = false; s.Store.Data.UpdateStatus(s.Now()); s.Store.Save() }()
+	next := time.Now()
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if e := s.Cycle(ctx); e != nil {
-			return e
+		// Automatic deadlines do not move when a manual request runs. An overdue
+		// observation has priority, so repeated callers cannot starve the observer.
+		if !time.Now().Before(next) {
+			if e := s.Cycle(ctx); e != nil {
+				return e
+			}
+			next = time.Now().Add(c.PollInterval)
 		}
-		timer := time.NewTimer(c.PollInterval)
+		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return nil
 		case <-timer.C:
+		case call := <-s.requests:
+			timer.Stop()
+			if !time.Now().Before(next) {
+				if e := s.Cycle(ctx); e != nil {
+					return e
+				}
+				next = time.Now().Add(c.PollInterval)
+			}
+			call.result <- s.Manual(call.ctx, call.request)
+			<-s.admission
 		}
 	}
 }
@@ -78,7 +98,13 @@ func (s *Service) failed(now time.Time, e error) error {
 	st.Connectivity = "degraded"
 	s.Store.Data.UpdateStatus(now)
 	s.Log.Warn("observation deferred", "reason", e.Error())
-	return s.Store.Save()
+	if err := s.save(); err != nil {
+		return err
+	}
+	if s.request != nil {
+		return e
+	}
+	return nil
 }
 
 func (s *Service) expirePending(now time.Time) {
@@ -97,7 +123,6 @@ func (s *Service) Cycle(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, 50*time.Second)
 	defer cancel()
 	now := s.Now()
-	s.sent = 0
 	s.Client.BeginCycle()
 	version, e := s.Client.Version(ctx)
 	if e != nil {
@@ -111,6 +136,11 @@ func (s *Service) Cycle(parent context.Context) error {
 		return s.failed(now, e)
 	}
 	groups := group(queue)
+	if s.request != nil {
+		if err := s.initializeReport(queue, groups); err != nil {
+			return err
+		}
+	}
 	data := &s.Store.Data
 	data.Status.Version = version
 	data.Status.Connectivity = "connected"
@@ -123,6 +153,9 @@ func (s *Service) Cycle(parent context.Context) error {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if !s.selected(id) {
+			continue
+		}
 		rows := groups[id]
 		if !policy.Eligible(rows) {
 			continue
@@ -148,9 +181,13 @@ func (s *Service) Cycle(parent context.Context) error {
 			data.Issues[id] = i
 		}
 		if identity != i.Identity || !eligible || !i.Eligible || i.State == "resolved" {
+			i.EligibleSince = now
 			i.Elapsed = 0
 			i.RecoveryDue = time.Time{}
 			i.CleanupDue = time.Time{}
+		}
+		if eligible && i.EligibleSince.IsZero() {
+			i.EligibleSince = i.FirstSeen
 		}
 		if eligible && i.Eligible && identity == i.Identity && !s.previous.IsZero() && now.After(s.previous) && now.Sub(s.previous) <= 2*s.Config.PollInterval && i.LastSeen.Equal(s.previous) {
 			delta := now.Sub(s.previous)
@@ -198,6 +235,13 @@ func (s *Service) Cycle(parent context.Context) error {
 			}
 		}
 	}
+	// Reconciliation can create a search continuation after its queue row has
+	// disappeared. Include that work in the report before allocating submissions.
+	if s.request != nil {
+		if err := s.initializeReport(queue, groups); err != nil {
+			return err
+		}
+	}
 	candidates := data.SortedIssues(false)
 	dueAt := func(i *state.Issue) time.Time {
 		if o, ok := observations[i.DownloadID]; ok {
@@ -219,9 +263,25 @@ func (s *Service) Cycle(parent context.Context) error {
 		if !x.Equal(y) {
 			return x.Before(y)
 		}
+		if x.IsZero() && s.request != nil && s.request.OverrideWait && !candidates[a].EligibleSince.Equal(candidates[b].EligibleSince) {
+			return candidates[a].EligibleSince.Before(candidates[b].EligibleSince)
+		}
 		return candidates[a].DownloadID < candidates[b].DownloadID
 	})
+	var plans []plannedAction
 	for _, i := range candidates {
+		if !s.selected(i.DownloadID) {
+			continue
+		}
+		if item := s.reportItem(i.DownloadID); item != nil && item.Disposition == "not_present" {
+			continue
+		}
+		o, ok := observations[i.DownloadID]
+		var d policy.Decision
+		if ok {
+			d = policy.Evaluate(s.Config, o)
+			s.describe(i, o, d)
+		}
 		if s.hasPending(i.DownloadID) {
 			status, reason := "in-progress", "pending/uncertain action protects this download and episodes"
 			for _, a := range data.Attempts {
@@ -230,25 +290,26 @@ func (s *Service) Cycle(parent context.Context) error {
 				}
 			}
 			s.setIssue(i, status, reason)
+			s.itemBlocked(i.DownloadID, "blocked", reason)
 			continue
 		}
-		o, ok := observations[i.DownloadID]
 		if !ok {
 			continue
 		}
-		d := policy.Evaluate(s.Config, o)
 		i.Fingerprint = d.Fingerprint
 		i.Decision = d
 		if d.Kind == "defer" {
 			s.setIssue(i, "policy-blocked", d.Reason)
+			s.itemBlocked(i.DownloadID, "blocked", s.previewReason(o, d.Reason))
 			continue
 		}
 		wait := s.Config.Recovery.Wait
 		if d.Kind != "import" {
 			wait = s.Config.Cleanup.Wait
 		}
-		if i.Elapsed < wait {
+		if i.Elapsed < wait && !(s.request != nil && s.request.OverrideWait) {
 			s.setIssue(i, "waiting", fmt.Sprintf("%s; observed eligibility %s of %s", d.Reason, i.Elapsed, wait))
+			s.itemBlocked(i.DownloadID, "waiting", i.Reason)
 			continue
 		}
 		if why := s.gate(i.DownloadID, d, now, 0); why != "" {
@@ -257,33 +318,89 @@ func (s *Service) Cycle(parent context.Context) error {
 				status = "exhausted"
 			}
 			s.setIssue(i, status, why)
+			disposition := "blocked"
+			if strings.Contains(why, "rolling hour") {
+				disposition = "limited"
+			}
+			s.itemBlocked(i.DownloadID, disposition, why)
 			continue
 		}
 		s.setIssue(i, "recoverable", d.Reason)
-		if s.Config.DryRun {
+		if s.request == nil && s.Config.DryRun {
 			s.recommend(i, d, now)
 			continue
 		}
-		if data.Status.ReadFailure != "" || s.sent >= s.Config.Limits.MutationsPerScan || ctx.Err() != nil {
+		if data.Status.ReadFailure != "" || ctx.Err() != nil {
+			s.itemBlocked(i.DownloadID, "blocked", "required reads or request deadline prevent submission")
 			continue
 		}
-		if e := s.execute(ctx, i, d, now); e != nil {
-			return e
+		if why := s.planGate(d, plans, now); why != "" {
+			s.itemBlocked(i.DownloadID, "limited", why)
+			continue
 		}
+		plans = append(plans, plannedAction{issue: i, decision: d})
+		s.itemBlocked(i.DownloadID, "would_"+d.Kind, d.Reason)
 	}
 	// A continuation is durable, independent of whether its old queue row still exists.
 	for _, id := range sortedOperations(data.Operations) {
 		op := data.Operations[id]
-		if op.State != "pending-search" || s.Config.DryRun || s.sent >= s.Config.Limits.MutationsPerScan {
+		if op.State != "pending-search" || !s.selected(id) || (s.request == nil && s.Config.DryRun) {
 			continue
 		}
-		if e := s.search(ctx, op, now); e != nil {
+		d, e := s.searchDecision(ctx, op)
+		if e != nil {
 			return e
+		}
+		if d.Kind == "" {
+			disposition := "blocked"
+			if strings.Contains(op.Reason, "rolling hour") {
+				disposition = "limited"
+			}
+			s.itemBlocked(id, disposition, op.Reason)
+			continue
+		}
+		if item := s.reportItem(id); item != nil {
+			item.Action = "search"
+			item.Episodes = d.EpisodeIDs
+		}
+		if why := s.planGate(d, plans, now); why != "" {
+			s.itemBlocked(id, "limited", why)
+			continue
+		}
+		plans = append(plans, plannedAction{issue: data.Issues[id], decision: d, operation: op})
+		s.itemBlocked(id, "would_search", d.Reason)
+	}
+	if e := s.checkReportSize(); e != nil {
+		return e
+	}
+	if s.request == nil || s.request.Execute {
+		for _, plan := range plans {
+			if ctx.Err() != nil || data.Status.ReadFailure != "" {
+				s.itemBlocked(plan.issue.DownloadID, "blocked", "required reads or request deadline prevent submission")
+				continue
+			}
+			before := len(data.Attempts)
+			var e error
+			if plan.operation != nil {
+				e = s.search(ctx, plan.operation, now)
+			} else {
+				e = s.execute(ctx, plan.issue, plan.decision, now)
+			}
+			s.recordEffects(plan.issue.DownloadID, before)
+			if e != nil {
+				return e
+			}
+			if len(data.Attempts) == before {
+				s.itemBlocked(plan.issue.DownloadID, "blocked", plan.issue.Reason)
+			}
 		}
 	}
 	data.Prune(now, s.Config.HistoryRetention, s.Config.Limits.EpisodeCooldown)
 	data.UpdateStatus(now)
-	return s.Store.Save()
+	if s.request != nil && data.Status.ReadFailure != "" {
+		return errors.New(data.Status.ReadFailure)
+	}
+	return s.save()
 }
 func sortedOperations(m map[string]*state.Operation) []string {
 	var ids []string
@@ -466,12 +583,20 @@ func (s *Service) nextID() int64 {
 }
 func (s *Service) reserve(i *state.Issue, d policy.Decision, now time.Time, before map[int]int) (int, error) {
 	a := state.Attempt{ID: s.nextID(), DownloadID: i.DownloadID, Fingerprint: d.Fingerprint, Kind: d.Kind, Reason: d.Reason, Started: now, Outcome: "intent", Decision: d, BeforeFiles: before, Title: i.Title}
+	if s.request != nil {
+		a.Source, a.RequestID, a.WaitOverride = "manual", s.request.ID, s.request.OverrideWait
+		receipt := s.Store.Data.Triggers[s.request.ID]
+		if receipt == nil {
+			return 0, errors.New("manual receipt missing; mutation refused")
+		}
+		receipt.AttemptIDs = append(receipt.AttemptIDs, a.ID)
+		receipt.Report = *s.report
+	}
 	s.Store.Data.Attempts = append(s.Store.Data.Attempts, a)
 	s.setIssue(i, "in-progress", "durable intent recorded before transmission")
 	if e := s.Store.Save(); e != nil {
 		return 0, e
 	}
-	s.sent++
 	return len(s.Store.Data.Attempts) - 1, nil
 }
 func (s *Service) execute(ctx context.Context, i *state.Issue, planned policy.Decision, now time.Time) error {

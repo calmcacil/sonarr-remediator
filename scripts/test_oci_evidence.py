@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import ast
 import copy
 import datetime
 import importlib.util
@@ -16,6 +17,14 @@ spec.loader.exec_module(oci)
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_smoke_harness_and_promotion_require_the_same_named_checks(self):
+        source = pathlib.Path(__file__).with_name("podman-smoke.py").read_text()
+        emitted = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == "checks":
+                emitted.update(ast.literal_eval(node.value))
+        self.assertEqual(emitted, RUNTIME_CHECKS)
+
     def test_manifest_config_platform_and_layer_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "image.tar"

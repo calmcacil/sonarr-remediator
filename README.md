@@ -28,7 +28,7 @@ and place the API key in `sonarr_api_key` inside that directory. Use the
 permissions. The service opens no inbound port.
 
 ```sh
-podman build -f Containerfile -t localhost/sonarr-remediator:0.1.1 .
+podman build -f Containerfile -t localhost/sonarr-remediator:0.2.0 .
 mkdir -m 700 state
 podman run -d --name sonarr-remediator \
   --userns=keep-id:uid=65532,gid=65532 \
@@ -36,7 +36,7 @@ podman run -d --name sonarr-remediator \
   --stop-timeout=30 --health-cmd='/sonarr-remediator healthcheck' \
   --health-start-period=3m \
   -v "$PWD/config:/config:ro" -v "$PWD/state:/state" \
-  localhost/sonarr-remediator:0.1.1 run --config /config/config.yaml
+  localhost/sonarr-remediator:0.2.0 run --config /config/config.yaml
 ```
 
 Attach the container to a private network where the configured Sonarr URL is
@@ -51,11 +51,35 @@ podman exec sonarr-remediator /sonarr-remediator status --json
 podman exec sonarr-remediator /sonarr-remediator issues
 podman exec sonarr-remediator /sonarr-remediator show DOWNLOAD_ID
 podman exec sonarr-remediator /sonarr-remediator actions --download-id DOWNLOAD_ID --limit 20
+podman exec sonarr-remediator /sonarr-remediator triggers --limit 20
 ```
 
 Use Sonarr's opaque `downloadId`, not a hash in the release title. All query
 commands accept `--state PATH`; listing commands accept `--limit`. Without a
 subcommand the binary runs the service. `version` reports the application version.
+
+## Request One Cycle
+
+Preview or explicitly execute one bounded cycle through the running observer:
+
+```sh
+podman exec sonarr-remediator /sonarr-remediator trigger --dry-run --override-wait
+podman exec sonarr-remediator /sonarr-remediator trigger --execute --override-wait --download-id DOWNLOAD_ID
+podman exec sonarr-remediator /sonarr-remediator triggers --request-id REQUEST_ID --json
+```
+
+Preview is the default and does not persist state. `--execute` permits work for
+that request even when background dry-run is enabled. `--override-wait` skips
+only the initial recovery/cleanup waits; permissions, cooldowns, retry protection,
+competition and shared mutation budgets still apply. Repeat `--download-id` for
+multiple exact IDs, or omit it to evaluate the current queue and pending searches.
+With default budgets one cycle can attempt at most one mutation. Cleanup uses
+the download client and can delete downloaded data.
+
+The commands use a private local socket on the existing state mount. They need
+the running observer and its state owner identity, with no new port or mount.
+Use equivalent `docker exec` commands for Docker. See [Operations](docs/OPERATIONS.md)
+for timeout, exit codes, receipts and the schema-2 rollback boundary.
 
 ## Policy
 

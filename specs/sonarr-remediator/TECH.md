@@ -33,6 +33,9 @@ to that version.
 
 Ship one binary with `run`, `status`, `issues`, `show`, `actions`, `healthcheck`,
 and `version` commands. Running the binary without a subcommand starts `run`.
+Version 0.2.0 adds `trigger` and `triggers` under the
+[manual-trigger contract](../manual-trigger/TECH.md). The observer retains sole
+state ownership; a private Unix socket carries requests into its serial loop.
 Local queries accept `--state` and `--json`; `healthcheck` returns an exit code.
 
 Keep five internal packages: `config`, `sonarr`, `policy`, `state`, and `service`.
@@ -105,7 +108,9 @@ The confirmed browser flow needs only the initial GET preview. Automatic
 recovery uses Sonarr's returned matches without editing show, season, episode,
 or quality. Do not use the evaluating `POST manualimport` endpoint or a browser
 session in the initial implementation. Every mutating HTTP request is visible
-at one guarded client boundary; dry-run cannot pass that boundary.
+at one guarded client boundary; preview and configured background dry-run cannot
+pass that boundary. An explicit manual-live request owns a separate cycle client
+whose boundary permits mutations while preserving configured policy permissions.
 
 Copy the browser's tracked-download command shape, including path, folder name,
 series ID, every episode ID, quality/revision, languages, release group,
@@ -196,7 +201,7 @@ local volume, WAL, full synchronous durability, transactional schema versions,
 and an exclusive process lock for `run`; local queries open the existing store
 read-only. A state initialization/migration failure starts no monitors.
 
-Four logical records suffice: service status/identity, download observations,
+The base records are service status/identity, download observations,
 action attempts, and operation progress. Episode cooldowns and rolling budgets
 are derived from retained attempts, rather than separate scheduling tables.
 Store eligible elapsed time, candidate fingerprints, attempt count/next due
@@ -211,6 +216,12 @@ store. Due timestamps are persisted for stable scheduling. Partial imported
 episode effects are monotonic historical evidence; complete success still needs
 fresh acceptable current files for all targets. Read errors do not bypass the
 verification deadline or erase an already established effect.
+
+Schema 2 adds `manual_triggers` with durable request receipts and linked attempt
+IDs. After exclusive ownership, full record validation and instance validation,
+the observer upgrades schema 1 transactionally without resetting the four records.
+Read-only queries support either schema. Version 0.1.x refuses schema 2; downgrade
+requires reconciling later effects before considering an older stopped-state backup.
 
 Accrue waiting time only between successful eligible observations. Credit at
 most one polling interval per pair; do not credit the interval across process

@@ -12,14 +12,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/calmcacil/sonarr-remediator/internal/control"
 	"github.com/calmcacil/sonarr-remediator/internal/policy"
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	_ "modernc.org/sqlite"
 )
 
-const Schema = 1
+const Schema = 2
 
 type Status struct {
+	ManualControl     string         `json:"manual_control,omitempty"`
 	Identity          string         `json:"sonarr_identity"`
 	Version           string         `json:"sonarr_version"`
 	DryRun            bool           `json:"dry_run"`
@@ -39,23 +41,27 @@ type Status struct {
 	Unresolved        int            `json:"unresolved_outcomes"`
 }
 type Issue struct {
-	DownloadID  string            `json:"download_id"`
-	Identity    string            `json:"identity"`
-	Fingerprint string            `json:"fingerprint"`
-	Title       string            `json:"title"`
-	Rows        []sonarr.QueueRow `json:"queue_rows"`
-	FirstSeen   time.Time         `json:"first_seen"`
-	LastSeen    time.Time         `json:"last_seen"`
-	Eligible    bool              `json:"eligible"`
-	Elapsed     time.Duration     `json:"eligible_elapsed_ns"`
-	RecoveryDue time.Time         `json:"recovery_due,omitempty"`
-	CleanupDue  time.Time         `json:"cleanup_due,omitempty"`
-	State       string            `json:"state"`
-	Reason      string            `json:"reason"`
-	Decision    policy.Decision   `json:"decision"`
-	ResolvedAt  time.Time         `json:"resolved_at,omitempty"`
+	DownloadID    string            `json:"download_id"`
+	Identity      string            `json:"identity"`
+	Fingerprint   string            `json:"fingerprint"`
+	Title         string            `json:"title"`
+	Rows          []sonarr.QueueRow `json:"queue_rows"`
+	FirstSeen     time.Time         `json:"first_seen"`
+	EligibleSince time.Time         `json:"eligible_since,omitempty"`
+	LastSeen      time.Time         `json:"last_seen"`
+	Eligible      bool              `json:"eligible"`
+	Elapsed       time.Duration     `json:"eligible_elapsed_ns"`
+	RecoveryDue   time.Time         `json:"recovery_due,omitempty"`
+	CleanupDue    time.Time         `json:"cleanup_due,omitempty"`
+	State         string            `json:"state"`
+	Reason        string            `json:"reason"`
+	Decision      policy.Decision   `json:"decision"`
+	ResolvedAt    time.Time         `json:"resolved_at,omitempty"`
 }
 type Attempt struct {
+	Source            string          `json:"source,omitempty"`
+	RequestID         string          `json:"request_id,omitempty"`
+	WaitOverride      bool            `json:"wait_override,omitempty"`
 	ID                int64           `json:"id"`
 	DownloadID        string          `json:"download_id"`
 	Fingerprint       string          `json:"fingerprint"`
@@ -87,10 +93,20 @@ type Operation struct {
 	Reason     string `json:"reason"`
 }
 type Data struct {
+	Triggers   map[string]*Receipt   `json:"manual_triggers"`
 	Status     Status                `json:"status"`
 	Issues     map[string]*Issue     `json:"issues"`
 	Attempts   []Attempt             `json:"attempts"`
 	Operations map[string]*Operation `json:"operations"`
+}
+
+type Receipt struct {
+	Request    control.Request `json:"request"`
+	Accepted   time.Time       `json:"accepted"`
+	Finished   time.Time       `json:"finished,omitempty"`
+	Status     string          `json:"status"`
+	Report     control.Report  `json:"report"`
+	AttemptIDs []int64         `json:"attempt_ids"`
 }
 type Store struct {
 	db       *sql.DB
@@ -168,7 +184,7 @@ func Open(path, identity string, readOnly bool) (*Store, error) {
 			s.Close()
 			return nil, e
 		}
-		_, e = tx.Exec("CREATE TABLE records (kind TEXT PRIMARY KEY, body TEXT NOT NULL); PRAGMA user_version=1;")
+		_, e = tx.Exec("CREATE TABLE records (kind TEXT PRIMARY KEY, body TEXT NOT NULL); PRAGMA user_version=2;")
 		if e != nil {
 			tx.Rollback()
 			s.Close()
@@ -178,11 +194,11 @@ func Open(path, identity string, readOnly bool) (*Store, error) {
 			s.Close()
 			return nil, e
 		}
-	} else if version != Schema {
+	} else if version != Schema && version != 1 {
 		s.Close()
 		return nil, fmt.Errorf("unsupported state schema %d", version)
 	}
-	s.Data = Data{Issues: map[string]*Issue{}, Operations: map[string]*Operation{}}
+	s.Data = Data{Issues: map[string]*Issue{}, Operations: map[string]*Operation{}, Triggers: map[string]*Receipt{}}
 	rows, e := s.db.Query("SELECT kind,body FROM records")
 	if e != nil {
 		s.Close()
@@ -205,6 +221,11 @@ func Open(path, identity string, readOnly bool) (*Store, error) {
 			target = &s.Data.Attempts
 		case "operations":
 			target = &s.Data.Operations
+		case "manual_triggers":
+			if version == 1 {
+				e = errors.New("unexpected receipt record in schema 1")
+			}
+			target = &s.Data.Triggers
 		default:
 			e = errors.New("unknown state record")
 		}
@@ -223,13 +244,33 @@ func Open(path, identity string, readOnly bool) (*Store, error) {
 		s.Close()
 		return nil, errors.New("corrupt state records")
 	}
-	if !newStore && (recordCount != 4 || s.Data.Status.Identity == "" || s.Data.Issues == nil || s.Data.Operations == nil) {
+	expected := 5
+	if version == 1 {
+		expected = 4
+	}
+	if !newStore && (recordCount != expected || s.Data.Status.Identity == "" || s.Data.Issues == nil || s.Data.Operations == nil || s.Data.Triggers == nil) {
 		s.Close()
 		return nil, errors.New("incomplete state records; refusing to reset safety history")
 	}
 	if readOnly && s.Data.Status.Identity == "" {
 		s.Close()
 		return nil, errors.New("state store is not initialized")
+	}
+	for _, issue := range s.Data.Issues {
+		if issue == nil {
+			s.Close()
+			return nil, errors.New("corrupt null observation; refusing to reset safety history")
+		}
+	}
+	for _, op := range s.Data.Operations {
+		if op == nil {
+			s.Close()
+			return nil, errors.New("corrupt null operation; refusing to reset safety history")
+		}
+	}
+	if e = s.Data.validateReceipts(); e != nil {
+		s.Close()
+		return nil, e
 	}
 	if !readOnly {
 		if s.Data.Status.Identity != "" && s.Data.Status.Identity != identity {
@@ -242,6 +283,14 @@ func Open(path, identity string, readOnly bool) (*Store, error) {
 			if a.Outcome == "intent" {
 				a.Outcome = "uncertain"
 				a.Reason = "process interrupted before acknowledgement; requires read reconciliation"
+			}
+		}
+		for _, receipt := range s.Data.Triggers {
+			if receipt.Status == "accepted" {
+				receipt.Status = "interrupted"
+				receipt.Finished = time.Now()
+				receipt.Report.ExitCode = 3
+				receipt.Report.Error = "observer interrupted; unsubmitted work will not resume; inspect linked effects"
 			}
 		}
 		if e = s.Save(); e != nil {
@@ -259,7 +308,7 @@ func (s *Store) Save() error {
 	if e != nil {
 		return errors.New("state transaction failed; mutations paused")
 	}
-	records := map[string]any{"status": s.Data.Status, "observations": s.Data.Issues, "attempts": s.Data.Attempts, "operations": s.Data.Operations}
+	records := map[string]any{"status": s.Data.Status, "observations": s.Data.Issues, "attempts": s.Data.Attempts, "operations": s.Data.Operations, "manual_triggers": s.Data.Triggers}
 	for kind, v := range records {
 		b, e := json.Marshal(v)
 		if e == nil {
@@ -269,6 +318,12 @@ func (s *Store) Save() error {
 			tx.Rollback()
 			return errors.New("state write failed; mutations paused")
 		}
+	}
+	// The fifth record and schema marker commit together, after identity and all
+	// existing records have been validated. Older readers refuse the new format.
+	if _, e = tx.Exec("PRAGMA user_version=2"); e != nil {
+		tx.Rollback()
+		return errors.New("state schema migration failed; mutations paused")
 	}
 	if e = tx.Commit(); e != nil {
 		return errors.New("state commit failed; mutations paused")
@@ -312,6 +367,25 @@ func (d *Data) AggregateStatus(now time.Time) {
 	}
 }
 func (d *Data) Prune(now time.Time, retention, cooldown time.Duration) {
+	protectedAttempts := map[int64]bool{}
+	for id, r := range d.Triggers {
+		unresolved := r.Status == "accepted"
+		for _, a := range d.Attempts {
+			if a.RequestID == id && d.retainAttempt(a, now, retention, cooldown) {
+				unresolved = true
+			}
+			if op := d.Operations[a.DownloadID]; a.RequestID == id && op != nil && op.State != "finished" {
+				unresolved = true
+			}
+		}
+		if !unresolved && !r.Finished.IsZero() && now.Sub(r.Finished) > retention {
+			delete(d.Triggers, id)
+			continue
+		}
+		for _, aid := range r.AttemptIDs {
+			protectedAttempts[aid] = true
+		}
+	}
 	for id, i := range d.Issues {
 		if i.State == "resolved" && !i.ResolvedAt.IsZero() && now.Sub(i.ResolvedAt) > retention {
 			protected := false
@@ -331,20 +405,24 @@ func (d *Data) Prune(now time.Time, retention, cooldown time.Duration) {
 	}
 	kept := d.Attempts[:0]
 	for _, a := range d.Attempts {
-		i := d.Issues[a.DownloadID]
-		needed := i != nil && i.State != "resolved"
-		if op := d.Operations[a.DownloadID]; op != nil && op.State != "finished" && op.RemovalID == a.ID {
-			needed = true
-		}
-		retainedFrom := a.Finished
-		if retainedFrom.IsZero() {
-			retainedFrom = a.Started
-		}
-		if a.Pending() || needed || a.Started.After(now.Add(-time.Hour)) || a.Finished.After(now.Add(-cooldown)) || retainedFrom.After(now.Add(-retention)) {
+		if protectedAttempts[a.ID] || d.retainAttempt(a, now, retention, cooldown) {
 			kept = append(kept, a)
 		}
 	}
 	d.Attempts = kept
+}
+
+func (d *Data) retainAttempt(a Attempt, now time.Time, retention, cooldown time.Duration) bool {
+	i := d.Issues[a.DownloadID]
+	needed := i != nil && i.State != "resolved"
+	if op := d.Operations[a.DownloadID]; op != nil && op.State != "finished" && op.RemovalID == a.ID {
+		needed = true
+	}
+	from := a.Finished
+	if from.IsZero() {
+		from = a.Started
+	}
+	return a.Pending() || needed || a.Started.After(now.Add(-time.Hour)) || a.Finished.After(now.Add(-cooldown)) || from.After(now.Add(-retention))
 }
 func (d *Data) SortedIssues(includeResolved bool) []*Issue {
 	var rows []*Issue
