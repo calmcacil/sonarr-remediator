@@ -1,0 +1,83 @@
+{
+  "excluded": "All headers, cookies, real hostname, raw identities, browser/device details, full series metadata, and unrelated telemetry entry",
+  "observedAtUtc": "2026-10-12T11:48:39.973Z",
+  "request": {
+    "method": "GET",
+    "queryString": [
+      {
+        "name": "downloadId",
+        "value": "download-008"
+      },
+      {
+        "name": "filterExistingFiles",
+        "value": "false"
+      }
+    ],
+    "url": "https://sonarr.example.invalid/api/v3/manualimport?downloadId=download-008&filterExistingFiles=false"
+  },
+  "response": {
+    "applicationVersion": "4.0.20.3014",
+    "mimeType": "application/json; charset=utf-8",
+    "selectedBody": [
+      {
+        "customFormatScore": 304,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6006,
+            "name": "Format-006"
+          }
+        ],
+        "downloadId": "download-008",
+        "episodes": [
+          {
+            "episodeFileId": 3010,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2016,
+            "monitored": true,
+            "seasonNumber": 2,
+            "seriesId": 1009
+          }
+        ],
+        "id": 5011,
+        "indexerFlags": 0,
+        "path": "/media/item-058.mkv",
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "resolution": 1080,
+            "source": "web"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "Not a Custom Format upgrade for existing episode file(s). New: [Format-002, Format-006] (304) do not improve on Existing: [Format-002, Format-006, Format-001] (805)",
+            "type": "permanent"
+          }
+        ],
+        "releaseType": "singleEpisode",
+        "seasonNumber": 2,
+        "series": {
+          "id": 1009,
+          "monitored": true,
+          "qualityProfileId": 7001,
+          "seriesType": "anime"
+        },
+        "size": 2880912431
+      }
+    ],
+    "status": 200
+  },
+  "source": "User-supplied Firefox HAR; selected protocol fields manually normalized against the snapshot aliases"
+}

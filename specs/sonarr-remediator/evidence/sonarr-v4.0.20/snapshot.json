@@ -1,0 +1,4057 @@
+{
+  "episodeFiles": [
+    {
+      "customFormatScore": 0,
+      "customFormats": [],
+      "dateAdded": "2024-12-20T04:40:05.917492Z",
+      "id": 3001,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-080.mkv",
+      "quality": {
+        "quality": {
+          "id": 7,
+          "name": "Bluray-1080p",
+          "resolution": 1080,
+          "source": "bluray"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-081.mkv",
+      "releaseGroup": "Group-004",
+      "seasonNumber": 1,
+      "seriesId": 1001,
+      "size": 962921411
+    },
+    {
+      "customFormatScore": 0,
+      "customFormats": [],
+      "dateAdded": "2024-12-20T04:40:05.917492Z",
+      "id": 3007,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-082.mkv",
+      "quality": {
+        "quality": {
+          "id": 7,
+          "name": "Bluray-1080p",
+          "resolution": 1080,
+          "source": "bluray"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-083.mkv",
+      "releaseGroup": "Group-004",
+      "seasonNumber": 1,
+      "seriesId": 1001,
+      "size": 1157416813
+    },
+    {
+      "customFormatScore": -697,
+      "customFormats": [
+        {
+          "id": 6004,
+          "name": "Format-004"
+        },
+        {
+          "id": 6007,
+          "name": "Format-007"
+        },
+        {
+          "id": 6002,
+          "name": "Format-002"
+        }
+      ],
+      "dateAdded": "2025-12-30T07:44:41.917492Z",
+      "id": 3012,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        },
+        {
+          "id": 1,
+          "name": "English"
+        },
+        {
+          "id": 4,
+          "name": "German"
+        },
+        {
+          "id": 3,
+          "name": "Spanish"
+        },
+        {
+          "id": 2,
+          "name": "French"
+        },
+        {
+          "id": 27,
+          "name": "Hindi"
+        },
+        {
+          "id": 5,
+          "name": "Italian"
+        },
+        {
+          "id": 12,
+          "name": "Polish"
+        },
+        {
+          "id": 18,
+          "name": "Portuguese"
+        },
+        {
+          "id": 32,
+          "name": "Thai"
+        },
+        {
+          "id": 17,
+          "name": "Turkish"
+        }
+      ],
+      "path": "/media/item-084.mkv",
+      "quality": {
+        "quality": {
+          "id": 3,
+          "name": "WEBDL-1080p",
+          "resolution": 1080,
+          "source": "web"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-085.mkv",
+      "releaseGroup": "Group-005",
+      "sceneName": "relative/item-086",
+      "seasonNumber": 1,
+      "seriesId": 1005,
+      "size": 1591340766
+    },
+    {
+      "customFormatScore": 0,
+      "customFormats": [],
+      "dateAdded": "2024-12-20T04:40:05.917492Z",
+      "id": 3014,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-087.mkv",
+      "quality": {
+        "quality": {
+          "id": 7,
+          "name": "Bluray-1080p",
+          "resolution": 1080,
+          "source": "bluray"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-088.mkv",
+      "releaseGroup": "Group-004",
+      "seasonNumber": 1,
+      "seriesId": 1001,
+      "size": 930582932
+    },
+    {
+      "customFormatScore": 807,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-31T20:26:41.917492Z",
+      "id": 3002,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-089.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-090.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-034",
+      "seasonNumber": 1,
+      "seriesId": 1007,
+      "size": 488346652
+    },
+    {
+      "customFormatScore": 807,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-24T09:43:46.917492Z",
+      "id": 3003,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-091.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-092.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-093",
+      "seasonNumber": 1,
+      "seriesId": 1002,
+      "size": 473174531
+    },
+    {
+      "customFormatScore": 807,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-24T09:43:45.917492Z",
+      "id": 3004,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-094.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-095.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-096",
+      "seasonNumber": 1,
+      "seriesId": 1002,
+      "size": 264163601
+    },
+    {
+      "customFormatScore": 807,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-30T12:22:41.917492Z",
+      "id": 3005,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-097.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-098.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-099",
+      "seasonNumber": 1,
+      "seriesId": 1002,
+      "size": 613247493
+    },
+    {
+      "customFormatScore": 406,
+      "customFormats": [
+        {
+          "id": 6008,
+          "name": "Format-008"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        }
+      ],
+      "dateAdded": "2025-12-30T04:25:41.917492Z",
+      "id": 3006,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-100.mkv",
+      "quality": {
+        "quality": {
+          "id": 3,
+          "name": "WEBDL-1080p",
+          "resolution": 1080,
+          "source": "web"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-101.mkv",
+      "releaseGroup": "Group-006",
+      "sceneName": "relative/item-102.264",
+      "seasonNumber": 1,
+      "seriesId": 1008,
+      "size": 1387324907
+    },
+    {
+      "customFormatScore": 807,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-30T08:03:41.917492Z",
+      "id": 3008,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-103.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-104.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-105",
+      "seasonNumber": 1,
+      "seriesId": 1003,
+      "size": 563524394
+    },
+    {
+      "customFormatScore": 807,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-25T00:39:01.917492Z",
+      "id": 3009,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-106.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-107.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-108",
+      "seasonNumber": 1,
+      "seriesId": 1003,
+      "size": 642829776
+    },
+    {
+      "customFormatScore": 805,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6006,
+          "name": "Format-006"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-31T22:48:41.917492Z",
+      "id": 3010,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-109.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-110.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-079",
+      "seasonNumber": 2,
+      "seriesId": 1009,
+      "size": 586030372
+    },
+    {
+      "customFormatScore": 807,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6005,
+          "name": "Format-005"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-30T23:31:41.917492Z",
+      "id": 3011,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-111.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-112.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-063",
+      "seasonNumber": 1,
+      "seriesId": 1010,
+      "size": 395012368
+    },
+    {
+      "customFormatScore": 805,
+      "customFormats": [
+        {
+          "id": 6002,
+          "name": "Format-002"
+        },
+        {
+          "id": 6006,
+          "name": "Format-006"
+        },
+        {
+          "id": 6001,
+          "name": "Format-001"
+        }
+      ],
+      "dateAdded": "2025-12-30T21:27:41.917492Z",
+      "id": 3013,
+      "languages": [
+        {
+          "id": 8,
+          "name": "Japanese"
+        }
+      ],
+      "path": "/media/item-113.mkv",
+      "quality": {
+        "quality": {
+          "id": 15,
+          "name": "WEBRip-1080p",
+          "resolution": 1080,
+          "source": "webRip"
+        },
+        "revision": {
+          "isRepack": false,
+          "real": 0,
+          "version": 1
+        }
+      },
+      "relativePath": "relative/item-114.mkv",
+      "releaseGroup": "Group-003",
+      "sceneName": "relative/item-073",
+      "seasonNumber": 3,
+      "seriesId": 1011,
+      "size": 499798043
+    }
+  ],
+  "episodes": [
+    {
+      "absoluteEpisodeNumber": 11,
+      "airDateUtc": "2013-03-06T03:12:41.917492Z",
+      "episodeFileId": 3001,
+      "episodeNumber": 11,
+      "hasFile": true,
+      "id": 2001,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1001,
+      "title": "Episode-001"
+    },
+    {
+      "absoluteEpisodeNumber": 12,
+      "airDateUtc": "2026-03-10T03:12:41.917492Z",
+      "episodeFileId": 0,
+      "episodeNumber": 12,
+      "hasFile": false,
+      "id": 2002,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1002,
+      "title": "Episode-004"
+    },
+    {
+      "absoluteEpisodeNumber": 4,
+      "airDateUtc": "2013-01-16T03:12:41.917492Z",
+      "episodeFileId": 3007,
+      "episodeNumber": 4,
+      "hasFile": true,
+      "id": 2003,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1001,
+      "title": "Episode-003"
+    },
+    {
+      "absoluteEpisodeNumber": 12,
+      "airDateUtc": "2026-03-10T04:42:41.917492Z",
+      "episodeFileId": 0,
+      "episodeNumber": 12,
+      "hasFile": false,
+      "id": 2004,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1003,
+      "title": "Episode-004"
+    },
+    {
+      "absoluteEpisodeNumber": 40,
+      "airDateUtc": "2025-12-30T20:12:41.917492Z",
+      "episodeFileId": 0,
+      "episodeNumber": 13,
+      "hasFile": false,
+      "id": 2005,
+      "monitored": true,
+      "seasonNumber": 2,
+      "seriesId": 1004,
+      "title": "Episode-005"
+    },
+    {
+      "absoluteEpisodeNumber": 2,
+      "airDateUtc": "2025-12-29T21:42:41.917492Z",
+      "episodeFileId": 3012,
+      "episodeNumber": 2,
+      "hasFile": true,
+      "id": 2006,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1005,
+      "title": "Episode-006"
+    },
+    {
+      "absoluteEpisodeNumber": 8,
+      "airDateUtc": "2013-02-13T03:12:41.917492Z",
+      "episodeFileId": 3014,
+      "episodeNumber": 8,
+      "hasFile": true,
+      "id": 2007,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1001,
+      "title": "Episode-007"
+    },
+    {
+      "absoluteEpisodeNumber": 28,
+      "airDateUtc": "2025-12-30T12:42:41.917492Z",
+      "episodeFileId": 0,
+      "episodeNumber": 28,
+      "hasFile": false,
+      "id": 2008,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1006,
+      "title": "Episode-008"
+    },
+    {
+      "absoluteEpisodeNumber": 1,
+      "airDateUtc": "2025-12-31T02:42:41.917492Z",
+      "episodeFileId": 3002,
+      "episodeNumber": 1,
+      "hasFile": true,
+      "id": 2009,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1007,
+      "title": "Episode-009"
+    },
+    {
+      "absoluteEpisodeNumber": 2,
+      "airDateUtc": "2025-12-30T03:12:41.917492Z",
+      "episodeFileId": 3003,
+      "episodeNumber": 2,
+      "hasFile": true,
+      "id": 2010,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1002,
+      "title": "Episode-010"
+    },
+    {
+      "absoluteEpisodeNumber": 1,
+      "airDateUtc": "2025-12-23T03:12:41.917492Z",
+      "episodeFileId": 3004,
+      "episodeNumber": 1,
+      "hasFile": true,
+      "id": 2011,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1002,
+      "title": "Episode-011"
+    },
+    {
+      "absoluteEpisodeNumber": 3,
+      "airDateUtc": "2026-01-06T03:12:41.917492Z",
+      "episodeFileId": 3005,
+      "episodeNumber": 3,
+      "hasFile": true,
+      "id": 2012,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1002,
+      "title": "Episode-012"
+    },
+    {
+      "absoluteEpisodeNumber": 2,
+      "airDateUtc": "2025-12-30T02:42:41.917492Z",
+      "episodeFileId": 3006,
+      "episodeNumber": 2,
+      "hasFile": true,
+      "id": 2013,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1008,
+      "title": "Episode-013"
+    },
+    {
+      "absoluteEpisodeNumber": 2,
+      "airDateUtc": "2025-12-30T04:42:41.917492Z",
+      "episodeFileId": 3008,
+      "episodeNumber": 2,
+      "hasFile": true,
+      "id": 2014,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1003,
+      "title": "Episode-014"
+    },
+    {
+      "absoluteEpisodeNumber": 1,
+      "airDateUtc": "2025-12-23T04:42:41.917492Z",
+      "episodeFileId": 3009,
+      "episodeNumber": 1,
+      "hasFile": true,
+      "id": 2015,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1003,
+      "title": "Episode-015"
+    },
+    {
+      "absoluteEpisodeNumber": 27,
+      "airDateUtc": "2025-12-30T19:42:41.917492Z",
+      "episodeFileId": 3010,
+      "episodeNumber": 2,
+      "hasFile": true,
+      "id": 2016,
+      "monitored": true,
+      "seasonNumber": 2,
+      "seriesId": 1009,
+      "title": "Episode-016"
+    },
+    {
+      "absoluteEpisodeNumber": 1,
+      "airDateUtc": "2025-12-30T02:57:41.917492Z",
+      "episodeFileId": 3011,
+      "episodeNumber": 1,
+      "hasFile": true,
+      "id": 2017,
+      "monitored": true,
+      "seasonNumber": 1,
+      "seriesId": 1010,
+      "title": "Episode-017"
+    },
+    {
+      "absoluteEpisodeNumber": 26,
+      "airDateUtc": "2025-12-30T04:12:41.917492Z",
+      "episodeFileId": 3013,
+      "episodeNumber": 2,
+      "hasFile": true,
+      "id": 2018,
+      "monitored": true,
+      "seasonNumber": 3,
+      "seriesId": 1011,
+      "title": "Episode-018"
+    }
+  ],
+  "manualImport": {
+    "download-001": [
+      {
+        "customFormatScore": 303,
+        "customFormats": [
+          {
+            "id": 6004,
+            "name": "Format-004"
+          },
+          {
+            "id": 6002,
+            "name": "Format-002"
+          }
+        ],
+        "downloadId": "download-001",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 28,
+            "airDateUtc": "2025-12-30T12:42:41.917492Z",
+            "episodeFileId": 0,
+            "episodeNumber": 28,
+            "hasFile": false,
+            "id": 2008,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1006,
+            "title": "Episode-008"
+          }
+        ],
+        "id": 5001,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-028",
+        "path": "/media/item-026.mkv",
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "resolution": 1080,
+            "source": "web"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [],
+        "relativePath": "relative/item-027.mkv",
+        "releaseGroup": "Group-001",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1006,
+          "monitored": true,
+          "path": "/media/item-015",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-006"
+        },
+        "size": 970703952
+      }
+    ],
+    "download-002": [
+      {
+        "customFormatScore": 2000,
+        "customFormats": [
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-002",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 11,
+            "airDateUtc": "2013-03-06T03:12:41.917492Z",
+            "episodeFileId": 3001,
+            "episodeNumber": 11,
+            "hasFile": true,
+            "id": 2001,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1001,
+            "title": "Episode-001"
+          }
+        ],
+        "folderName": "relative/item-031",
+        "id": 5002,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-031",
+        "path": "/media/item-029.mkv",
+        "quality": {
+          "quality": {
+            "id": 7,
+            "name": "Bluray-1080p",
+            "resolution": 1080,
+            "source": "bluray"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 14,
+        "rejections": [
+          {
+            "reason": "Unable to determine if file is a sample",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-030.mkv",
+        "releaseGroup": "Group-002",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1001,
+          "monitored": true,
+          "path": "/media/item-016",
+          "qualityProfileId": 7002,
+          "seriesType": "anime",
+          "title": "Series-001"
+        },
+        "size": 864040929
+      }
+    ],
+    "download-003": [
+      {
+        "customFormatScore": 807,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6005,
+            "name": "Format-005"
+          },
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-003",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 1,
+            "airDateUtc": "2025-12-31T02:42:41.917492Z",
+            "episodeFileId": 3002,
+            "episodeNumber": 1,
+            "hasFile": true,
+            "id": 2009,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1007,
+            "title": "Episode-009"
+          }
+        ],
+        "id": 5003,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-034",
+        "path": "/media/item-032.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [],
+        "relativePath": "relative/item-033.mkv",
+        "releaseGroup": "Group-003",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1007,
+          "monitored": true,
+          "path": "/media/item-017",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-007"
+        },
+        "size": 488346652
+      }
+    ],
+    "download-004": [
+      {
+        "customFormatScore": 0,
+        "customFormats": [],
+        "downloadId": "download-004",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 2,
+            "airDateUtc": "2025-12-30T03:12:41.917492Z",
+            "episodeFileId": 3003,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2010,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1002,
+            "title": "Episode-010"
+          }
+        ],
+        "folderName": "relative/item-037",
+        "id": 5004,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 11,
+            "name": "Russian"
+          },
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-038",
+        "path": "/media/item-035.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-036.mkv",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1002,
+          "monitored": true,
+          "path": "/media/item-018",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-002"
+        },
+        "size": 1046224043
+      },
+      {
+        "customFormatScore": 0,
+        "customFormats": [],
+        "downloadId": "download-004",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 1,
+            "airDateUtc": "2025-12-23T03:12:41.917492Z",
+            "episodeFileId": 3004,
+            "episodeNumber": 1,
+            "hasFile": true,
+            "id": 2011,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1002,
+            "title": "Episode-011"
+          }
+        ],
+        "folderName": "relative/item-037",
+        "id": 5005,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 11,
+            "name": "Russian"
+          },
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-041",
+        "path": "/media/item-039.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-040.mkv",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1002,
+          "monitored": true,
+          "path": "/media/item-018",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-002"
+        },
+        "size": 1039643844
+      },
+      {
+        "customFormatScore": 0,
+        "customFormats": [],
+        "downloadId": "download-004",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 3,
+            "airDateUtc": "2026-01-06T03:12:41.917492Z",
+            "episodeFileId": 3005,
+            "episodeNumber": 3,
+            "hasFile": true,
+            "id": 2012,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1002,
+            "title": "Episode-012"
+          }
+        ],
+        "folderName": "relative/item-037",
+        "id": 5006,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 11,
+            "name": "Russian"
+          },
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-044",
+        "path": "/media/item-042.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-043.mkv",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1002,
+          "monitored": true,
+          "path": "/media/item-018",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-002"
+        },
+        "size": 1025536931
+      }
+    ],
+    "download-005": [
+      {
+        "customFormatScore": 807,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6005,
+            "name": "Format-005"
+          },
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-005",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 2,
+            "airDateUtc": "2025-12-30T02:42:41.917492Z",
+            "episodeFileId": 3006,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2013,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1008,
+            "title": "Episode-013"
+          }
+        ],
+        "id": 5007,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-047",
+        "path": "/media/item-045.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [],
+        "relativePath": "relative/item-046.mkv",
+        "releaseGroup": "Group-003",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1008,
+          "monitored": true,
+          "path": "/media/item-019",
+          "qualityProfileId": 7001,
+          "seriesType": "standard",
+          "title": "Series-008"
+        },
+        "size": 787451976
+      }
+    ],
+    "download-006": [
+      {
+        "customFormatScore": 2000,
+        "customFormats": [
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-006",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 4,
+            "airDateUtc": "2013-01-16T03:12:41.917492Z",
+            "episodeFileId": 3007,
+            "episodeNumber": 4,
+            "hasFile": true,
+            "id": 2003,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1001,
+            "title": "Episode-003"
+          }
+        ],
+        "folderName": "relative/item-050",
+        "id": 5008,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-050",
+        "path": "/media/item-048.mkv",
+        "quality": {
+          "quality": {
+            "id": 7,
+            "name": "Bluray-1080p",
+            "resolution": 1080,
+            "source": "bluray"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 14,
+        "rejections": [
+          {
+            "reason": "Unable to determine if file is a sample",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-049.mkv",
+        "releaseGroup": "Group-002",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1001,
+          "monitored": true,
+          "path": "/media/item-016",
+          "qualityProfileId": 7002,
+          "seriesType": "anime",
+          "title": "Series-001"
+        },
+        "size": 1064108481
+      }
+    ],
+    "download-007": [
+      {
+        "customFormatScore": 0,
+        "customFormats": [],
+        "downloadId": "download-007",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 2,
+            "airDateUtc": "2025-12-30T04:42:41.917492Z",
+            "episodeFileId": 3008,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2014,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1003,
+            "title": "Episode-014"
+          }
+        ],
+        "folderName": "relative/item-053",
+        "id": 5009,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 11,
+            "name": "Russian"
+          },
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-054",
+        "path": "/media/item-051.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-052.mkv",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1003,
+          "monitored": true,
+          "path": "/media/item-020",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-003"
+        },
+        "size": 1304403297
+      },
+      {
+        "customFormatScore": 0,
+        "customFormats": [],
+        "downloadId": "download-007",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 1,
+            "airDateUtc": "2025-12-23T04:42:41.917492Z",
+            "episodeFileId": 3009,
+            "episodeNumber": 1,
+            "hasFile": true,
+            "id": 2015,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1003,
+            "title": "Episode-015"
+          }
+        ],
+        "folderName": "relative/item-053",
+        "id": 5010,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 11,
+            "name": "Russian"
+          },
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-057",
+        "path": "/media/item-055.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-056.mkv",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1003,
+          "monitored": true,
+          "path": "/media/item-020",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-003"
+        },
+        "size": 1342009243
+      }
+    ],
+    "download-008": [
+      {
+        "customFormatScore": 304,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6006,
+            "name": "Format-006"
+          }
+        ],
+        "downloadId": "download-008",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 27,
+            "airDateUtc": "2025-12-30T19:42:41.917492Z",
+            "episodeFileId": 3010,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2016,
+            "monitored": true,
+            "seasonNumber": 2,
+            "seriesId": 1009,
+            "title": "Episode-016"
+          }
+        ],
+        "id": 5011,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          },
+          {
+            "id": 1,
+            "name": "English"
+          },
+          {
+            "id": 26,
+            "name": "Arabic"
+          },
+          {
+            "id": 2,
+            "name": "French"
+          },
+          {
+            "id": 4,
+            "name": "German"
+          },
+          {
+            "id": 27,
+            "name": "Hindi"
+          },
+          {
+            "id": 44,
+            "name": "Indonesian"
+          },
+          {
+            "id": 5,
+            "name": "Italian"
+          },
+          {
+            "id": 21,
+            "name": "Korean"
+          },
+          {
+            "id": 18,
+            "name": "Portuguese"
+          },
+          {
+            "id": 3,
+            "name": "Spanish"
+          },
+          {
+            "id": 43,
+            "name": "Tamil"
+          },
+          {
+            "id": 32,
+            "name": "Thai"
+          }
+        ],
+        "name": "relative/item-060",
+        "path": "/media/item-058.mkv",
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "resolution": 1080,
+            "source": "web"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "Not a Custom Format upgrade for existing episode file(s). New: [Format-002, Format-006] (304) do not improve on Existing: [Format-002, Format-006, Format-001] (805)",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-059.mkv",
+        "releaseGroup": "Group-001",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 2,
+        "series": {
+          "id": 1009,
+          "monitored": true,
+          "path": "/media/item-021",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-009"
+        },
+        "size": 2880912431
+      }
+    ],
+    "download-009": [
+      {
+        "customFormatScore": 807,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6005,
+            "name": "Format-005"
+          },
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-009",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 1,
+            "airDateUtc": "2025-12-30T02:57:41.917492Z",
+            "episodeFileId": 3011,
+            "episodeNumber": 1,
+            "hasFile": true,
+            "id": 2017,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1010,
+            "title": "Episode-017"
+          }
+        ],
+        "id": 5012,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-063",
+        "path": "/media/item-061.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [],
+        "relativePath": "relative/item-062.mkv",
+        "releaseGroup": "Group-003",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1010,
+          "monitored": true,
+          "path": "/media/item-022",
+          "qualityProfileId": 7001,
+          "seriesType": "standard",
+          "title": "Series-010"
+        },
+        "size": 395012368
+      }
+    ],
+    "download-010": [
+      {
+        "customFormatScore": 305,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6003,
+            "name": "Format-003"
+          }
+        ],
+        "downloadId": "download-010",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 40,
+            "airDateUtc": "2025-12-30T20:12:41.917492Z",
+            "episodeFileId": 0,
+            "episodeNumber": 13,
+            "hasFile": false,
+            "id": 2005,
+            "monitored": true,
+            "seasonNumber": 2,
+            "seriesId": 1004,
+            "title": "Episode-005"
+          }
+        ],
+        "folderName": "relative/item-066",
+        "id": 5013,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-067",
+        "path": "/media/item-064.mkv",
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "resolution": 1080,
+            "source": "web"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [
+          {
+            "reason": "This show has individual episode mappings on TheXEM but the mapping for this episode has not been confirmed yet by their administrators. TheXEM needs manual input.",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-065.mkv",
+        "releaseGroup": "Group-001",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 2,
+        "series": {
+          "id": 1004,
+          "monitored": true,
+          "path": "/media/item-023",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-004"
+        },
+        "size": 885002844
+      }
+    ],
+    "download-011": [
+      {
+        "customFormatScore": 804,
+        "customFormats": [
+          {
+            "id": 6004,
+            "name": "Format-004"
+          },
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-011",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 2,
+            "airDateUtc": "2025-12-29T21:42:41.917492Z",
+            "episodeFileId": 3012,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2006,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1005,
+            "title": "Episode-006"
+          }
+        ],
+        "folderName": "relative/item-070",
+        "id": 5014,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-070",
+        "path": "/media/item-068.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [],
+        "relativePath": "relative/item-069.mkv",
+        "releaseGroup": "Group-003",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1005,
+          "monitored": true,
+          "path": "/media/item-024",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-005"
+        },
+        "size": 486752033
+      }
+    ],
+    "download-012": [
+      {
+        "customFormatScore": 805,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6006,
+            "name": "Format-006"
+          },
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-012",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 26,
+            "airDateUtc": "2025-12-30T04:12:41.917492Z",
+            "episodeFileId": 3013,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2018,
+            "monitored": true,
+            "seasonNumber": 3,
+            "seriesId": 1011,
+            "title": "Episode-018"
+          }
+        ],
+        "id": 5015,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-073",
+        "path": "/media/item-071.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [],
+        "relativePath": "relative/item-072.mkv",
+        "releaseGroup": "Group-003",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 3,
+        "series": {
+          "id": 1011,
+          "monitored": true,
+          "path": "/media/item-025",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-011"
+        },
+        "size": 499798043
+      }
+    ],
+    "download-013": [
+      {
+        "customFormatScore": 2000,
+        "customFormats": [
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-013",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 8,
+            "airDateUtc": "2013-02-13T03:12:41.917492Z",
+            "episodeFileId": 3014,
+            "episodeNumber": 8,
+            "hasFile": true,
+            "id": 2007,
+            "monitored": true,
+            "seasonNumber": 1,
+            "seriesId": 1001,
+            "title": "Episode-007"
+          }
+        ],
+        "folderName": "relative/item-076",
+        "id": 5016,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-076",
+        "path": "/media/item-074.mkv",
+        "quality": {
+          "quality": {
+            "id": 7,
+            "name": "Bluray-1080p",
+            "resolution": 1080,
+            "source": "bluray"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 14,
+        "rejections": [
+          {
+            "reason": "Unable to determine if file is a sample",
+            "type": "permanent"
+          }
+        ],
+        "relativePath": "relative/item-075.mkv",
+        "releaseGroup": "Group-002",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 1,
+        "series": {
+          "id": 1001,
+          "monitored": true,
+          "path": "/media/item-016",
+          "qualityProfileId": 7002,
+          "seriesType": "anime",
+          "title": "Series-001"
+        },
+        "size": 793727251
+      }
+    ],
+    "download-014": [
+      {
+        "customFormatScore": 805,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6006,
+            "name": "Format-006"
+          },
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadId": "download-014",
+        "episodes": [
+          {
+            "absoluteEpisodeNumber": 27,
+            "airDateUtc": "2025-12-30T19:42:41.917492Z",
+            "episodeFileId": 3010,
+            "episodeNumber": 2,
+            "hasFile": true,
+            "id": 2016,
+            "monitored": true,
+            "seasonNumber": 2,
+            "seriesId": 1009,
+            "title": "Episode-016"
+          }
+        ],
+        "id": 5017,
+        "indexerFlags": 0,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "name": "relative/item-079",
+        "path": "/media/item-077.mkv",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityWeight": 13,
+        "rejections": [],
+        "relativePath": "relative/item-078.mkv",
+        "releaseGroup": "Group-003",
+        "releaseType": "singleEpisode",
+        "seasonNumber": 2,
+        "series": {
+          "id": 1009,
+          "monitored": true,
+          "path": "/media/item-021",
+          "qualityProfileId": 7001,
+          "seriesType": "anime",
+          "title": "Series-009"
+        },
+        "size": 586030372
+      }
+    ]
+  },
+  "mediaManagement": {
+    "downloadPropersAndRepacks": "doNotPrefer"
+  },
+  "metadata": {
+    "captureDurationSeconds": 1.78,
+    "capturedAtUtc": "2026-10-12T11:47:18.082508+00:00",
+    "consistency": "Endpoints were read sequentially; this is not an atomic snapshot",
+    "fixtureTimeAnchorUtc": "2026-01-01T00:00:00+00:00",
+    "missingAddedCount": 10,
+    "pagination": "Queue records combined from all pages; first page envelope retained",
+    "previewCount": 14,
+    "previewFileCount": 17,
+    "projection": "Selected API fields only; omitted fields are not evidence of absence",
+    "queuePageCount": 1,
+    "queueStatusCounts": {
+      "completed": 14
+    },
+    "rejectionCounts": {
+      "Not a Custom Format upgrade for existing episode file(s). New: [Format-002, Format-006] (304) do not improve on Existing: [Format-002, Format-006, Format-001] (805)": 1,
+      "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)": 5,
+      "This show has individual episode mappings on TheXEM but the mapping for this episode has not been confirmed yet by their administrators. TheXEM needs manual input.": 1,
+      "Unable to determine if file is a sample": 3
+    },
+    "requestedCaseMatchFields": {
+      "browserNonUpgradeExample": [
+        "outputPath",
+        "title"
+      ],
+      "browserUpgradeExample": [
+        "outputPath",
+        "title"
+      ]
+    },
+    "requestedCases": {
+      "browserNonUpgradeExample": "download-008",
+      "browserUpgradeExample": "download-009"
+    },
+    "sonarrVersion": "4.0.20.3014",
+    "trackedStateCounts": {
+      "importBlocked": 11,
+      "importPending": 3
+    },
+    "unknownSeriesCount": 7
+  },
+  "qualityProfiles": [
+    {
+      "cutoff": 9003,
+      "cutoffFormatScore": 10000,
+      "formatItems": [
+        {
+          "format": 6009,
+          "name": "Format-009",
+          "score": 1400
+        },
+        {
+          "format": 6010,
+          "name": "Format-010",
+          "score": 1300
+        },
+        {
+          "format": 6011,
+          "name": "Format-011",
+          "score": 1200
+        },
+        {
+          "format": 6012,
+          "name": "Format-012",
+          "score": 1100
+        },
+        {
+          "format": 6013,
+          "name": "Format-013",
+          "score": 1000
+        },
+        {
+          "format": 6014,
+          "name": "Format-014",
+          "score": 900
+        },
+        {
+          "format": 6015,
+          "name": "Format-015",
+          "score": 800
+        },
+        {
+          "format": 6016,
+          "name": "Format-016",
+          "score": 700
+        },
+        {
+          "format": 6017,
+          "name": "Format-017",
+          "score": 600
+        },
+        {
+          "format": 6018,
+          "name": "Format-018",
+          "score": 500
+        },
+        {
+          "format": 6008,
+          "name": "Format-008",
+          "score": 400
+        },
+        {
+          "format": 6002,
+          "name": "Format-002",
+          "score": 300
+        },
+        {
+          "format": 6019,
+          "name": "Format-019",
+          "score": 200
+        },
+        {
+          "format": 6020,
+          "name": "Format-020",
+          "score": 100
+        },
+        {
+          "format": 6021,
+          "name": "Format-021",
+          "score": -10000
+        },
+        {
+          "format": 6022,
+          "name": "Format-022",
+          "score": -10000
+        },
+        {
+          "format": 6023,
+          "name": "Format-023",
+          "score": -10000
+        },
+        {
+          "format": 6024,
+          "name": "Format-024",
+          "score": -51
+        },
+        {
+          "format": 6025,
+          "name": "Format-025",
+          "score": 1
+        },
+        {
+          "format": 6026,
+          "name": "Format-026",
+          "score": 2
+        },
+        {
+          "format": 6027,
+          "name": "Format-027",
+          "score": 3
+        },
+        {
+          "format": 6028,
+          "name": "Format-028",
+          "score": 4
+        },
+        {
+          "format": 6029,
+          "name": "Format-029",
+          "score": -10000
+        },
+        {
+          "format": 6030,
+          "name": "Format-030",
+          "score": -10000
+        },
+        {
+          "format": 6005,
+          "name": "Format-005",
+          "score": 6
+        },
+        {
+          "format": 6031,
+          "name": "Format-031",
+          "score": 2
+        },
+        {
+          "format": 6032,
+          "name": "Format-032",
+          "score": 3
+        },
+        {
+          "format": 6003,
+          "name": "Format-003",
+          "score": 5
+        },
+        {
+          "format": 6006,
+          "name": "Format-006",
+          "score": 4
+        },
+        {
+          "format": 6004,
+          "name": "Format-004",
+          "score": 3
+        },
+        {
+          "format": 6033,
+          "name": "Format-033",
+          "score": 1
+        },
+        {
+          "format": 6034,
+          "name": "Format-034",
+          "score": 0
+        },
+        {
+          "format": 6035,
+          "name": "Format-035",
+          "score": 0
+        },
+        {
+          "format": 6036,
+          "name": "Format-036",
+          "score": 0
+        },
+        {
+          "format": 6037,
+          "name": "Format-037",
+          "score": 1
+        },
+        {
+          "format": 6038,
+          "name": "Format-038",
+          "score": -10000
+        },
+        {
+          "format": 6001,
+          "name": "Format-001",
+          "score": 501
+        },
+        {
+          "format": 6039,
+          "name": "Format-039",
+          "score": 101
+        },
+        {
+          "format": 6007,
+          "name": "Format-007",
+          "score": -1000
+        },
+        {
+          "format": 6040,
+          "name": "Format-040",
+          "score": -10000
+        },
+        {
+          "format": 6041,
+          "name": "Format-041",
+          "score": -10000
+        },
+        {
+          "format": 6042,
+          "name": "Format-042",
+          "score": -10000
+        },
+        {
+          "format": 6043,
+          "name": "Format-043",
+          "score": -10000
+        },
+        {
+          "format": 6044,
+          "name": "Format-044",
+          "score": -10000
+        },
+        {
+          "format": 6045,
+          "name": "Format-045",
+          "score": 0
+        },
+        {
+          "format": 6046,
+          "name": "Format-046",
+          "score": 0
+        },
+        {
+          "format": 6047,
+          "name": "Format-047",
+          "score": 0
+        },
+        {
+          "format": 6048,
+          "name": "Format-048",
+          "score": 0
+        },
+        {
+          "format": 6049,
+          "name": "Format-049",
+          "score": 0
+        },
+        {
+          "format": 6050,
+          "name": "Format-050",
+          "score": 0
+        },
+        {
+          "format": 6051,
+          "name": "Format-051",
+          "score": 0
+        },
+        {
+          "format": 6052,
+          "name": "Format-052",
+          "score": 0
+        },
+        {
+          "format": 6053,
+          "name": "Format-053",
+          "score": 0
+        },
+        {
+          "format": 6054,
+          "name": "Format-054",
+          "score": 0
+        },
+        {
+          "format": 6055,
+          "name": "Format-055",
+          "score": 0
+        },
+        {
+          "format": 6056,
+          "name": "Format-056",
+          "score": 0
+        },
+        {
+          "format": 6057,
+          "name": "Format-057",
+          "score": 0
+        },
+        {
+          "format": 6058,
+          "name": "Format-058",
+          "score": 0
+        },
+        {
+          "format": 6059,
+          "name": "Format-059",
+          "score": 0
+        },
+        {
+          "format": 6060,
+          "name": "Format-060",
+          "score": 0
+        },
+        {
+          "format": 6061,
+          "name": "Format-061",
+          "score": 0
+        },
+        {
+          "format": 6062,
+          "name": "Format-062",
+          "score": 0
+        },
+        {
+          "format": 6063,
+          "name": "Format-063",
+          "score": 0
+        },
+        {
+          "format": 6064,
+          "name": "Format-064",
+          "score": 0
+        },
+        {
+          "format": 6065,
+          "name": "Format-065",
+          "score": 0
+        },
+        {
+          "format": 6066,
+          "name": "Format-066",
+          "score": 0
+        },
+        {
+          "format": 6067,
+          "name": "Format-067",
+          "score": 0
+        },
+        {
+          "format": 6068,
+          "name": "Format-068",
+          "score": 0
+        },
+        {
+          "format": 6069,
+          "name": "Format-069",
+          "score": 0
+        }
+      ],
+      "id": 7001,
+      "items": [
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 10,
+            "name": "Raw-HD",
+            "resolution": 1080,
+            "source": "televisionRaw"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 20,
+            "name": "Bluray-1080p Remux",
+            "resolution": 1080,
+            "source": "blurayRaw"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 16,
+            "name": "HDTV-2160p",
+            "resolution": 2160,
+            "source": "television"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 17,
+            "name": "WEBRip-2160p",
+            "resolution": 2160,
+            "source": "webRip"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 18,
+            "name": "WEBDL-2160p",
+            "resolution": 2160,
+            "source": "web"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 19,
+            "name": "Bluray-2160p",
+            "resolution": 2160,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 21,
+            "name": "Bluray-2160p Remux",
+            "resolution": 2160,
+            "source": "blurayRaw"
+          }
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 1,
+            "name": "SDTV",
+            "resolution": 480,
+            "source": "television"
+          }
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 2,
+            "name": "DVD",
+            "resolution": 480,
+            "source": "dvd"
+          }
+        },
+        {
+          "allowed": true,
+          "id": 9001,
+          "items": [
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 12,
+                "name": "WEBRip-480p",
+                "resolution": 480,
+                "source": "webRip"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 8,
+                "name": "WEBDL-480p",
+                "resolution": 480,
+                "source": "web"
+              }
+            }
+          ],
+          "name": "QualityGroup-001"
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 13,
+            "name": "Bluray-480p",
+            "resolution": 480,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 22,
+            "name": "Bluray-576p",
+            "resolution": 576,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": true,
+          "id": 9002,
+          "items": [
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 4,
+                "name": "HDTV-720p",
+                "resolution": 720,
+                "source": "television"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 14,
+                "name": "WEBRip-720p",
+                "resolution": 720,
+                "source": "webRip"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 5,
+                "name": "WEBDL-720p",
+                "resolution": 720,
+                "source": "web"
+              }
+            }
+          ],
+          "name": "QualityGroup-002"
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 6,
+            "name": "Bluray-720p",
+            "resolution": 720,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": true,
+          "id": 9003,
+          "items": [
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 9,
+                "name": "HDTV-1080p",
+                "resolution": 1080,
+                "source": "television"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 15,
+                "name": "WEBRip-1080p",
+                "resolution": 1080,
+                "source": "webRip"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 3,
+                "name": "WEBDL-1080p",
+                "resolution": 1080,
+                "source": "web"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 7,
+                "name": "Bluray-1080p",
+                "resolution": 1080,
+                "source": "bluray"
+              }
+            }
+          ],
+          "name": "QualityGroup-003"
+        }
+      ],
+      "minFormatScore": 0,
+      "minUpgradeFormatScore": 1,
+      "name": "Profile-001",
+      "upgradeAllowed": true
+    },
+    {
+      "cutoff": 1,
+      "cutoffFormatScore": 10000,
+      "formatItems": [
+        {
+          "format": 6009,
+          "name": "Format-009",
+          "score": 1400
+        },
+        {
+          "format": 6010,
+          "name": "Format-010",
+          "score": 1300
+        },
+        {
+          "format": 6011,
+          "name": "Format-011",
+          "score": 1200
+        },
+        {
+          "format": 6012,
+          "name": "Format-012",
+          "score": 1100
+        },
+        {
+          "format": 6013,
+          "name": "Format-013",
+          "score": 1000
+        },
+        {
+          "format": 6014,
+          "name": "Format-014",
+          "score": 900
+        },
+        {
+          "format": 6015,
+          "name": "Format-015",
+          "score": 800
+        },
+        {
+          "format": 6016,
+          "name": "Format-016",
+          "score": 700
+        },
+        {
+          "format": 6017,
+          "name": "Format-017",
+          "score": 600
+        },
+        {
+          "format": 6018,
+          "name": "Format-018",
+          "score": 500
+        },
+        {
+          "format": 6008,
+          "name": "Format-008",
+          "score": 400
+        },
+        {
+          "format": 6002,
+          "name": "Format-002",
+          "score": 300
+        },
+        {
+          "format": 6019,
+          "name": "Format-019",
+          "score": 200
+        },
+        {
+          "format": 6020,
+          "name": "Format-020",
+          "score": 100
+        },
+        {
+          "format": 6021,
+          "name": "Format-021",
+          "score": -10000
+        },
+        {
+          "format": 6022,
+          "name": "Format-022",
+          "score": -10000
+        },
+        {
+          "format": 6023,
+          "name": "Format-023",
+          "score": -10000
+        },
+        {
+          "format": 6024,
+          "name": "Format-024",
+          "score": -51
+        },
+        {
+          "format": 6025,
+          "name": "Format-025",
+          "score": 1
+        },
+        {
+          "format": 6026,
+          "name": "Format-026",
+          "score": 2
+        },
+        {
+          "format": 6027,
+          "name": "Format-027",
+          "score": 3
+        },
+        {
+          "format": 6028,
+          "name": "Format-028",
+          "score": 4
+        },
+        {
+          "format": 6029,
+          "name": "Format-029",
+          "score": -10000
+        },
+        {
+          "format": 6030,
+          "name": "Format-030",
+          "score": -10000
+        },
+        {
+          "format": 6005,
+          "name": "Format-005",
+          "score": 6
+        },
+        {
+          "format": 6031,
+          "name": "Format-031",
+          "score": 2
+        },
+        {
+          "format": 6032,
+          "name": "Format-032",
+          "score": 3
+        },
+        {
+          "format": 6003,
+          "name": "Format-003",
+          "score": 5
+        },
+        {
+          "format": 6006,
+          "name": "Format-006",
+          "score": 4
+        },
+        {
+          "format": 6004,
+          "name": "Format-004",
+          "score": 3
+        },
+        {
+          "format": 6033,
+          "name": "Format-033",
+          "score": 1
+        },
+        {
+          "format": 6034,
+          "name": "Format-034",
+          "score": 0
+        },
+        {
+          "format": 6035,
+          "name": "Format-035",
+          "score": 0
+        },
+        {
+          "format": 6036,
+          "name": "Format-036",
+          "score": 0
+        },
+        {
+          "format": 6037,
+          "name": "Format-037",
+          "score": 1
+        },
+        {
+          "format": 6038,
+          "name": "Format-038",
+          "score": -10000
+        },
+        {
+          "format": 6001,
+          "name": "Format-001",
+          "score": 2000
+        },
+        {
+          "format": 6039,
+          "name": "Format-039",
+          "score": 101
+        },
+        {
+          "format": 6007,
+          "name": "Format-007",
+          "score": -1000
+        },
+        {
+          "format": 6040,
+          "name": "Format-040",
+          "score": -10000
+        },
+        {
+          "format": 6041,
+          "name": "Format-041",
+          "score": -10000
+        },
+        {
+          "format": 6042,
+          "name": "Format-042",
+          "score": -10000
+        },
+        {
+          "format": 6043,
+          "name": "Format-043",
+          "score": -10000
+        },
+        {
+          "format": 6044,
+          "name": "Format-044",
+          "score": -10000
+        },
+        {
+          "format": 6045,
+          "name": "Format-045",
+          "score": 0
+        },
+        {
+          "format": 6046,
+          "name": "Format-046",
+          "score": 0
+        },
+        {
+          "format": 6047,
+          "name": "Format-047",
+          "score": 0
+        },
+        {
+          "format": 6048,
+          "name": "Format-048",
+          "score": 0
+        },
+        {
+          "format": 6049,
+          "name": "Format-049",
+          "score": 0
+        },
+        {
+          "format": 6050,
+          "name": "Format-050",
+          "score": 0
+        },
+        {
+          "format": 6051,
+          "name": "Format-051",
+          "score": 0
+        },
+        {
+          "format": 6052,
+          "name": "Format-052",
+          "score": 0
+        },
+        {
+          "format": 6053,
+          "name": "Format-053",
+          "score": 0
+        },
+        {
+          "format": 6054,
+          "name": "Format-054",
+          "score": 0
+        },
+        {
+          "format": 6055,
+          "name": "Format-055",
+          "score": 0
+        },
+        {
+          "format": 6056,
+          "name": "Format-056",
+          "score": 0
+        },
+        {
+          "format": 6057,
+          "name": "Format-057",
+          "score": 0
+        },
+        {
+          "format": 6058,
+          "name": "Format-058",
+          "score": 0
+        },
+        {
+          "format": 6059,
+          "name": "Format-059",
+          "score": 0
+        },
+        {
+          "format": 6060,
+          "name": "Format-060",
+          "score": 0
+        },
+        {
+          "format": 6061,
+          "name": "Format-061",
+          "score": 0
+        },
+        {
+          "format": 6062,
+          "name": "Format-062",
+          "score": 0
+        },
+        {
+          "format": 6063,
+          "name": "Format-063",
+          "score": 0
+        },
+        {
+          "format": 6064,
+          "name": "Format-064",
+          "score": 0
+        },
+        {
+          "format": 6065,
+          "name": "Format-065",
+          "score": 0
+        },
+        {
+          "format": 6066,
+          "name": "Format-066",
+          "score": 0
+        },
+        {
+          "format": 6067,
+          "name": "Format-067",
+          "score": 0
+        },
+        {
+          "format": 6068,
+          "name": "Format-068",
+          "score": 0
+        },
+        {
+          "format": 6069,
+          "name": "Format-069",
+          "score": 0
+        }
+      ],
+      "id": 7002,
+      "items": [
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 10,
+            "name": "Raw-HD",
+            "resolution": 1080,
+            "source": "televisionRaw"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 20,
+            "name": "Bluray-1080p Remux",
+            "resolution": 1080,
+            "source": "blurayRaw"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 16,
+            "name": "HDTV-2160p",
+            "resolution": 2160,
+            "source": "television"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 17,
+            "name": "WEBRip-2160p",
+            "resolution": 2160,
+            "source": "webRip"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 18,
+            "name": "WEBDL-2160p",
+            "resolution": 2160,
+            "source": "web"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 19,
+            "name": "Bluray-2160p",
+            "resolution": 2160,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": false,
+          "items": [],
+          "quality": {
+            "id": 21,
+            "name": "Bluray-2160p Remux",
+            "resolution": 2160,
+            "source": "blurayRaw"
+          }
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 1,
+            "name": "SDTV",
+            "resolution": 480,
+            "source": "television"
+          }
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 2,
+            "name": "DVD",
+            "resolution": 480,
+            "source": "dvd"
+          }
+        },
+        {
+          "allowed": true,
+          "id": 9001,
+          "items": [
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 12,
+                "name": "WEBRip-480p",
+                "resolution": 480,
+                "source": "webRip"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 8,
+                "name": "WEBDL-480p",
+                "resolution": 480,
+                "source": "web"
+              }
+            }
+          ],
+          "name": "QualityGroup-001"
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 13,
+            "name": "Bluray-480p",
+            "resolution": 480,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 22,
+            "name": "Bluray-576p",
+            "resolution": 576,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": true,
+          "id": 9002,
+          "items": [
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 4,
+                "name": "HDTV-720p",
+                "resolution": 720,
+                "source": "television"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 14,
+                "name": "WEBRip-720p",
+                "resolution": 720,
+                "source": "webRip"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 5,
+                "name": "WEBDL-720p",
+                "resolution": 720,
+                "source": "web"
+              }
+            }
+          ],
+          "name": "QualityGroup-002"
+        },
+        {
+          "allowed": true,
+          "items": [],
+          "quality": {
+            "id": 6,
+            "name": "Bluray-720p",
+            "resolution": 720,
+            "source": "bluray"
+          }
+        },
+        {
+          "allowed": true,
+          "id": 9003,
+          "items": [
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 9,
+                "name": "HDTV-1080p",
+                "resolution": 1080,
+                "source": "television"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 15,
+                "name": "WEBRip-1080p",
+                "resolution": 1080,
+                "source": "webRip"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 3,
+                "name": "WEBDL-1080p",
+                "resolution": 1080,
+                "source": "web"
+              }
+            },
+            {
+              "allowed": true,
+              "items": [],
+              "quality": {
+                "id": 7,
+                "name": "Bluray-1080p",
+                "resolution": 1080,
+                "source": "bluray"
+              }
+            }
+          ],
+          "name": "QualityGroup-003"
+        }
+      ],
+      "minFormatScore": 0,
+      "minUpgradeFormatScore": 1,
+      "name": "Profile-002",
+      "upgradeAllowed": true
+    }
+  ],
+  "queue": {
+    "page": 1,
+    "pageSize": 100,
+    "records": [
+      {
+        "customFormatScore": 0,
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-001",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4001,
+        "languages": [
+          {
+            "id": 0,
+            "name": "Unknown"
+          }
+        ],
+        "outputPath": "/media/item-001",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "size": 970703952,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes."
+            ],
+            "title": "Release-001"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-001",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "added": "2025-12-31T20:41:48.917492Z",
+        "customFormatScore": 2000,
+        "customFormats": [
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadClient": "Client-002",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-002",
+        "episodeId": 2001,
+        "errorMessage": "",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4002,
+        "indexer": "Indexer-001",
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "outputPath": "/media/item-002",
+        "protocol": "usenet",
+        "quality": {
+          "quality": {
+            "id": 7,
+            "name": "Bluray-1080p",
+            "resolution": 1080,
+            "source": "bluray"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "seriesId": 1001,
+        "size": 890682005,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Unable to determine if file is a sample"
+            ],
+            "title": "relative/item-031"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "relative/item-031",
+        "trackedDownloadState": "importPending",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-003",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4003,
+        "languages": [
+          {
+            "id": 0,
+            "name": "Unknown"
+          }
+        ],
+        "outputPath": "/media/item-003",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "size": 488346652,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes."
+            ],
+            "title": "Release-003"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-003",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "customFormats": [],
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-004",
+        "episodeId": 2002,
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4004,
+        "languages": [
+          {
+            "id": 11,
+            "name": "Russian"
+          }
+        ],
+        "outputPath": "/media/item-004",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "seriesId": 1002,
+        "size": 3111404818,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [],
+            "title": "One or more episodes expected in this release were not imported or missing from the release"
+          },
+          {
+            "messages": [
+              "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)"
+            ],
+            "title": "relative/item-040.mkv"
+          },
+          {
+            "messages": [
+              "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)"
+            ],
+            "title": "relative/item-036.mkv"
+          },
+          {
+            "messages": [
+              "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)"
+            ],
+            "title": "relative/item-043.mkv"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-004",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-005",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4005,
+        "languages": [
+          {
+            "id": 0,
+            "name": "Unknown"
+          }
+        ],
+        "outputPath": "/media/item-005",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "size": 787451976,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes."
+            ],
+            "title": "Release-005"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-005",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "added": "2025-12-31T20:41:34.917492Z",
+        "customFormatScore": 2000,
+        "customFormats": [
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadClient": "Client-002",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-006",
+        "episodeId": 2003,
+        "errorMessage": "",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4006,
+        "indexer": "Indexer-001",
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "outputPath": "/media/item-006",
+        "protocol": "usenet",
+        "quality": {
+          "quality": {
+            "id": 7,
+            "name": "Bluray-1080p",
+            "resolution": 1080,
+            "source": "bluray"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "seriesId": 1001,
+        "size": 1097235751,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Unable to determine if file is a sample"
+            ],
+            "title": "relative/item-050"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "relative/item-050",
+        "trackedDownloadState": "importPending",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "customFormats": [],
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-007",
+        "episodeId": 2004,
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4007,
+        "languages": [
+          {
+            "id": 11,
+            "name": "Russian"
+          }
+        ],
+        "outputPath": "/media/item-007",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "seriesId": 1003,
+        "size": 2646412540,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [],
+            "title": "One or more episodes expected in this release were not imported or missing from the release"
+          },
+          {
+            "messages": [
+              "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)"
+            ],
+            "title": "relative/item-056.mkv"
+          },
+          {
+            "messages": [
+              "Not a Custom Format upgrade for existing episode file(s). New: [] (0) do not improve on Existing: [Format-002, Format-005, Format-001] (807)"
+            ],
+            "title": "relative/item-052.mkv"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-007",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-008",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4008,
+        "languages": [
+          {
+            "id": 0,
+            "name": "Unknown"
+          }
+        ],
+        "outputPath": "/media/item-008",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "size": 2880912431,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes."
+            ],
+            "title": "Release-008"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-008",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-009",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4009,
+        "languages": [
+          {
+            "id": 0,
+            "name": "Unknown"
+          }
+        ],
+        "outputPath": "/media/item-009",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "size": 395012368,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes."
+            ],
+            "title": "Release-009"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-009",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 305,
+        "customFormats": [
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6003,
+            "name": "Format-003"
+          }
+        ],
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-010",
+        "episodeId": 2005,
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4010,
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "outputPath": "/media/item-010",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "WEBDL-1080p",
+            "resolution": 1080,
+            "source": "web"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "seriesId": 1004,
+        "size": 885002844,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [],
+            "title": "One or more episodes expected in this release were not imported or missing from the release"
+          },
+          {
+            "messages": [
+              "This show has individual episode mappings on TheXEM but the mapping for this episode has not been confirmed yet by their administrators. TheXEM needs manual input."
+            ],
+            "title": "relative/item-065.mkv"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-010",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "added": "2025-12-30T10:02:53.917492Z",
+        "customFormatScore": 804,
+        "customFormats": [
+          {
+            "id": 6004,
+            "name": "Format-004"
+          },
+          {
+            "id": 6002,
+            "name": "Format-002"
+          },
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadClient": "Client-002",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-011",
+        "episodeId": 2006,
+        "errorMessage": "",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4011,
+        "indexer": "Indexer-002",
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "outputPath": "/media/item-011",
+        "protocol": "usenet",
+        "quality": {
+          "quality": {
+            "id": 15,
+            "name": "WEBRip-1080p",
+            "resolution": 1080,
+            "source": "webRip"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "seriesId": 1005,
+        "size": 506213093,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. See the FAQ for details."
+            ],
+            "title": "relative/item-070"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "relative/item-070",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-012",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4012,
+        "languages": [
+          {
+            "id": 0,
+            "name": "Unknown"
+          }
+        ],
+        "outputPath": "/media/item-012",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "size": 499798043,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes."
+            ],
+            "title": "Release-012"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-012",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "added": "2025-12-31T20:41:42.917492Z",
+        "customFormatScore": 2000,
+        "customFormats": [
+          {
+            "id": 6001,
+            "name": "Format-001"
+          }
+        ],
+        "downloadClient": "Client-002",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-013",
+        "episodeId": 2007,
+        "errorMessage": "",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4013,
+        "indexer": "Indexer-001",
+        "languages": [
+          {
+            "id": 8,
+            "name": "Japanese"
+          }
+        ],
+        "outputPath": "/media/item-013",
+        "protocol": "usenet",
+        "quality": {
+          "quality": {
+            "id": 7,
+            "name": "Bluray-1080p",
+            "resolution": 1080,
+            "source": "bluray"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "seriesId": 1001,
+        "size": 819063640,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Unable to determine if file is a sample"
+            ],
+            "title": "relative/item-076"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "relative/item-076",
+        "trackedDownloadState": "importPending",
+        "trackedDownloadStatus": "warning"
+      },
+      {
+        "customFormatScore": 0,
+        "downloadClient": "Client-001",
+        "downloadClientHasPostImportCategory": false,
+        "downloadId": "download-014",
+        "estimatedCompletionTime": "2025-12-31T23:59:42.917492Z",
+        "id": 4014,
+        "languages": [
+          {
+            "id": 0,
+            "name": "Unknown"
+          }
+        ],
+        "outputPath": "/media/item-014",
+        "protocol": "torrent",
+        "quality": {
+          "quality": {
+            "id": 0,
+            "name": "Unknown",
+            "resolution": 0,
+            "source": "unknown"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "size": 586030372,
+        "sizeleft": 0,
+        "status": "completed",
+        "statusMessages": [
+          {
+            "messages": [
+              "Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes."
+            ],
+            "title": "Release-014"
+          }
+        ],
+        "timeleft": "00:00:00",
+        "title": "Release-014",
+        "trackedDownloadState": "importBlocked",
+        "trackedDownloadStatus": "warning"
+      }
+    ],
+    "sortDirection": "descending",
+    "sortKey": "timeleft",
+    "totalRecords": 14
+  }
+}
