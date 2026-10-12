@@ -110,12 +110,16 @@ class APIReadTests(unittest.TestCase):
 
     def test_read_back_detects_extra_bypass_and_independent_approval_requirements(self):
         expected = {"bypass_actors": [], "rules": [{"type": "pull_request", "parameters": {
-            "required_approving_review_count": 0}}]}
+            "required_approving_review_count": 0, "required_reviewers": [],
+            "require_extra_approval_for_unattributed_changes": False}}]}
         actual = {"id": 99, **expected}
         self.assertTrue(policy_module.subset(actual, expected))
         self.assertFalse(policy_module.subset({**actual, "bypass_actors": [{"actor_id": 1}]}, expected))
         self.assertFalse(policy_module.subset({**actual, "rules": [{"type": "pull_request", "parameters": {
             "required_approving_review_count": 1}}]}, expected))
+        extra_approval = {**actual, "rules": [{"type": "pull_request", "parameters": {
+            **expected["rules"][0]["parameters"], "require_extra_approval_for_unattributed_changes": True}}]}
+        self.assertFalse(policy_module.subset(extra_approval, expected))
 
 
 if __name__ == "__main__":

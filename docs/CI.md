@@ -79,7 +79,8 @@ bypass actors. It then reads back every required field. API errors fail visibly;
 settings APIs are not transactional, so rerun inspection after an interrupted apply.
 
 Main requires a PR, successful current `CI`, an up-to-date branch, resolved review
-conversations, and linear history. Independent approvals are zero. Owner bypass,
+conversations, and linear history. Independent approvals are zero; no explicit
+reviewers or extra approval for unattributed changes are required. Owner bypass,
 force updates, and deletion are prohibited. `v*` tag creation is permitted;
 updates/deletion are prohibited. No remote recreation or deletion is automated.
 
@@ -170,13 +171,37 @@ upstream Renovate GHCR index and arm64 manifest/config blob, verifying their
 digests without publishing anything. GitHub download tests reject corrupt ZIPs,
 unexpected files/hosts, and forwarding the workflow token to artifact storage.
 
-Read-only remote inspection found repository ID 1415679277 public with default
-main and read-only workflow tokens. It still allows merge/rebase merges, does
-not delete merged branches, allows all actions without SHA enforcement, and has
-no rulesets. No remote policy, tags, package visibility, or registry writes were
-changed during local implementation.
+Before activation, repository ID 1415679277 was public with default main and
+read-only workflow tokens, but allowed all merge methods/actions and had no
+rulesets. Local implementation did not change those remote settings.
 
-Hosted amd64/arm64 run IDs and receipts, enforced policy read-back/disposable
-protection checks, Renovate App activation, and an actual public GHCR release
-remain operational acceptance steps. Local tests and YAML lint do not establish
-those external outcomes.
+## Initial Hosted Acceptance (2026-10-12)
+
+[PR #5](https://github.com/calmcacil/sonarr-remediator/pull/5)'s first revision
+passed [CI run 38280473491](https://github.com/calmcacil/sonarr-remediator/actions/runs/38280473491),
+attempt 1: Go, both native Podman jobs, and the strict CI gate all succeeded.
+Both runners used rootless Podman 4.9.3, UID 1001, and overlay storage. Native
+shutdown took 0.093 seconds on amd64 and 0.079 seconds on arm64. The receipt ZIP
+was downloaded and verified against its GitHub artifact digest.
+
+The first receipt records head `a4f43f917a311f5c4cd8cac1af12637048cce27c`, tested
+checkout `1eb2e21d0bef11c3faa303b050172ebc63ab16b8`, tree
+`32a1e427f28bc04b68ca76c19f08913d9b9bad06`, and VERSION 0.1.0. This historical
+receipt proves the first hosted trial; promotion must use the final merged PR
+revision's own successful run and artifacts.
+
+The reviewed settings were applied and read back with no mismatches: squash-only
+merges, branch deletion, read-only token defaults, selected SHA-pinned actions,
+main ruleset 24940631, and immutable-tag ruleset 24940633. Both rulesets report
+`current_user_can_bypass: never`. Required CI is bound to Actions ID 15368 and
+uses strict up-to-date checks, zero approvals, and no extra unattributed-change
+approval. No destructive main/tag probes were performed.
+
+Renovate onboarding is merged and its App is producing dependency PRs. The
+operator explicitly requested deletion of the surviving legacy GHCR package;
+they removed it, and a read-only API lookup confirmed absence before the fresh
+0.1.0 release. Future version collisions still fail without overwrite.
+
+Current-revision CI and initial public release results are recorded on the PR
+and release workflow. Public package setup and anonymous pulls remain required
+before reporting publication success; local lint does not establish them.

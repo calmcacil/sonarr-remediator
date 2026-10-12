@@ -73,17 +73,21 @@ additional valid-pack and crash-boundary coverage is now present and passing.
 
 ## Release Acceptance
 
-Native amd64 container runtime acceptance remains required before release. The
+Native amd64 container runtime acceptance is required before release. The
 local host is arm64; successful amd64 compilation establishes a build target.
 `.github/workflows/ci.yml` supplies native amd64 and arm64 rootless Podman jobs,
 source vulnerability checks for both targets, exact OCI artifacts, and an
 always-evaluated `CI` gate that rejects failed/missing/mixed-attempt evidence.
-The workflow has been linted locally; hosted runs have not been requested.
+The first hosted trial, CI run 38280473491 for PR #5, passed Go checks, native
+rootless Podman acceptance on both architectures, and the CI gate. Each new
+revision still requires its own successful run and matching promotion receipt.
 
 The separately approved GitHub Actions specification now has checked-in
 repository-policy setup/read-back tooling and immutable release promotion.
 Hosted execution, policy enforcement, and actual publication remain operational
-acceptance steps. No remote repository settings, release tags, GHCR package,
-or production deployment were changed during local implementation.
+acceptance steps. During activation, the reviewed repository policy was applied
+and read back, Renovate onboarding was confirmed, and the operator deleted the
+legacy GHCR package for a fresh initial release. Details are in [CI.md](CI.md).
+No production deployment was requested.
 Rootless Docker runtime acceptance is secondary and has not been claimed from
 the Compose configuration check.
