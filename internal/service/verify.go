@@ -250,13 +250,13 @@ func (s *Service) current(ctx context.Context, id int) (sonarr.Episode, sonarr.E
 	}
 	return ep, f, p, nil
 }
-func (s *Service) search(ctx context.Context, op *state.Operation, now time.Time) error {
+func (s *Service) searchDecision(ctx context.Context, op *state.Operation) (policy.Decision, error) {
 	if !s.Config.Cleanup.Enabled || !s.Config.Cleanup.ReplacementSearch {
 		op.Reason = "replacement search permission disabled"
-		return nil
+		return policy.Decision{}, nil
 	}
 	if s.Store.Data.Status.ReadFailure != "" || s.hasPending(op.DownloadID) {
-		return nil
+		return policy.Decision{}, nil
 	}
 	var parent *state.Attempt
 	for j := range s.Store.Data.Attempts {
@@ -267,29 +267,29 @@ func (s *Service) search(ctx context.Context, op *state.Operation, now time.Time
 	}
 	if parent == nil || parent.Kind != "remove_unusable" || parent.Outcome != "verified" {
 		op.Reason = "verified removal evidence unavailable"
-		return nil
+		return policy.Decision{}, nil
 	}
 	for _, a := range s.Store.Data.Attempts {
 		if !a.DryRun && a.DownloadID == op.DownloadID && a.Kind == "search" {
 			op.State = "finished"
 			op.Reason = "search attempt already recorded"
-			return nil
+			return policy.Decision{}, nil
 		}
 	}
 	s.Client.BeginCycle()
 	queue, e := s.Client.Queue(ctx)
 	if e != nil {
 		s.Store.Data.Status.ReadFailure = e.Error()
-		return nil
+		return policy.Decision{}, nil
 	}
 	i := s.Store.Data.Issues[op.DownloadID]
 	if i == nil {
-		return errors.New("search operation has no original observation")
+		return policy.Decision{}, errors.New("search operation has no original observation")
 	}
 	for _, r := range i.Rows {
 		if !policy.ClientAllowed(s.Config, r.DownloadClient) {
 			op.Reason = "original download client excluded"
-			return nil
+			return policy.Decision{}, nil
 		}
 	}
 	targets := []int{}
@@ -297,20 +297,20 @@ func (s *Service) search(ctx context.Context, op *state.Operation, now time.Time
 		ep, f, p, e := s.current(ctx, eid)
 		if e != nil {
 			s.Store.Data.Status.ReadFailure = e.Error()
-			return nil
+			return policy.Decision{}, nil
 		}
 		if !policy.SeriesAllowed(s.Config, ep.SeriesID) {
 			op.Reason = "affected series excluded"
-			return nil
+			return policy.Decision{}, nil
 		}
 		series, e := s.Client.Series(ctx, ep.SeriesID)
 		if e != nil {
 			s.Store.Data.Status.ReadFailure = e.Error()
-			return nil
+			return policy.Decision{}, nil
 		}
 		if series.Monitored == nil {
 			op.Reason = "missing series monitored state"
-			return nil
+			return policy.Decision{}, nil
 		}
 		if *series.Monitored && *ep.Monitored && !policy.Acceptable(f, p) {
 			targets = append(targets, eid)
@@ -319,21 +319,31 @@ func (s *Service) search(ctx context.Context, op *state.Operation, now time.Time
 	if len(targets) == 0 {
 		op.State = "finished"
 		op.Reason = "no monitored missing episodes require replacement"
-		return nil
+		return policy.Decision{}, nil
 	}
 	if policy.Competing(queue, "", targets) {
 		op.Reason = "competing active download"
-		return nil
+		return policy.Decision{}, nil
 	}
 	sort.Ints(targets)
 	d := policy.Decision{Kind: "search", Reason: "verified unusable removal; monitored episodes still missing acceptable files", EpisodeIDs: targets, SeriesIDs: parent.Decision.SeriesIDs, Fingerprint: parent.Fingerprint}
 	if why := s.gate(op.DownloadID, d, s.Now(), op.RemovalID); why != "" {
 		op.Reason = why
-		return nil
+		return policy.Decision{}, nil
 	}
 	if ctx.Err() != nil {
-		return nil
+		return policy.Decision{}, nil
 	}
+	return d, nil
+}
+
+func (s *Service) search(ctx context.Context, op *state.Operation, now time.Time) error {
+	d, e := s.searchDecision(ctx, op)
+	if e != nil || d.Kind == "" {
+		return e
+	}
+	i := s.Store.Data.Issues[op.DownloadID]
+	targets := d.EpisodeIDs
 	idx, e := s.reserve(i, d, s.Now(), nil)
 	if e != nil {
 		return e

@@ -40,8 +40,8 @@ requires a deliberately chosen new store after stopping the old observer.
 Build/test native images with:
 
 ```sh
-podman build --format oci -f Containerfile -t localhost/remediator:acceptance .
-python3 scripts/podman-smoke.py --image localhost/remediator:acceptance --architecture arm64
+mise exec -- podman build --format oci -f Containerfile -t localhost/remediator:acceptance .
+mise exec -- python scripts/podman-smoke.py --image localhost/remediator:acceptance --architecture arm64
 ```
 
 Use `amd64` on a native amd64 machine. The harness creates and removes its own
@@ -64,6 +64,64 @@ The application does not change ownership at runtime. Confirm `docker info`
 reports rootless mode, then `docker compose up --build -d` and inspect local
 health/status. This recipe is secondary compatibility; native Podman is the
 required acceptance path.
+
+## Manual Triggers
+
+Use `podman exec` or `docker exec` inside the existing container as the application
+identity. The running observer owns all evaluation and submission; a stopped or
+busy observer fails explicitly. `status` shows whether its private local control
+socket is available. A filesystem/path that cannot support the socket disables
+manual control while ordinary observation continues.
+
+```sh
+podman exec sonarr-remediator /sonarr-remediator trigger --json
+podman exec sonarr-remediator /sonarr-remediator trigger --dry-run --override-wait --download-id DOWNLOAD_ID --json
+podman exec sonarr-remediator /sonarr-remediator trigger --execute --override-wait --download-id DOWNLOAD_ID --json
+podman exec sonarr-remediator /sonarr-remediator triggers --limit 20 --json
+podman exec sonarr-remediator /sonarr-remediator triggers --request-id REQUEST_ID --json
+```
+
+`trigger` defaults to preview. Preview makes read-only Sonarr calls, but does not
+save state, recommendations, waiting progress or budget reservations. Background
+observation can run before or after it. The report separates policy eligibility
+from the actions that fit this cycle's shared budgets.
+
+`--execute` authorizes one live cycle even with `dry_run: true`; scheduled work
+keeps its configured mode. `--dry-run=false` is rejected. An explicit
+`--override-wait` skips only `recovery.wait` and `cleanup.wait`. It does not alter
+stored progress or bypass protected tracked states, permissions, complete episode
+membership, competition, cooldowns, retry spacing, attempt exhaustion or uncertain
+effects. A fresh live evaluation can differ from an earlier preview.
+
+Repeated `--download-id` flags select exact Sonarr download IDs, deduplicated
+without changing the IDs. Queue-row IDs and titles are not selectors. Omitting
+the selector includes the current queue and pending search continuations. At most
+1,000 downloads and 16 KiB of request data are allowed; narrow selectors on a size
+error. Selection still uses the complete queue for competing-download checks.
+
+The default and maximum `--timeout` are `2m`, including waiting for an automatic
+cycle. Only one manual request can be running or queued; additional requests get
+`busy`. SIGINT stops new manual work and returns 130. An accepted Sonarr request
+can still finish. Imports, client removal/blocklisting and replacement search
+share the usual one-per-scan and five-per-hour default budgets. A removal can
+delete downloaded data; blocklisting and replacement search are separate choices.
+
+Each live request prints its request ID on stderr before transmission and receives
+a durable receipt before mutation. `triggers` reads receipts locally without
+Sonarr credentials or requests. Effects remain pending until ordinary correlated
+verification, which also runs during background dry-run. A pending replacement
+search needs another explicit trigger or enabled active background work.
+
+JSON stdout contains one schema-versioned document; diagnostics use stderr.
+`trigger` exit codes are 0 for a completed preview with a selectable action or an
+acknowledged submission, 2 for a completed evaluation with no selectable action,
+1 for invalid input, unavailable/busy control or a required-read/local failure,
+and 3 when execution may have happened but its result is uncertain. Exit 0 does
+not claim external success. After a lost response or exit 3/130, inspect `triggers`
+and Sonarr before issuing a new execution. The CLI never retries automatically,
+and restart does not execute unfinished request plans.
+The receipt's `exit_code` records the invocation result; its linked effects reflect
+the latest verification evidence.
 
 ## Health, Logs, and Shutdown
 
@@ -95,11 +153,19 @@ reconciling actions performed since that backup; otherwise it can lose replay
 protection. Finished history defaults to 30 days; unresolved actions and records
 still needed for retries, budgets, cooldowns, or operation continuation remain.
 
+Version 0.2.0 automatically upgrades validated schema-1 stores to schema 2 in a
+transaction, preserving waits, budgets and unresolved effects. Forward updates
+need only an image-version change; container identity, startup, healthcheck,
+mounts and permissions stay the same. Make a private stopped-state backup under
+the existing procedure before updating. Version 0.1.x cannot read schema 2, so
+image downgrade alone cannot roll back the store. Never restore pre-trigger state
+over later accepted Sonarr effects: reconcile those effects before any restore.
+
 ## Intervention
 
 `show DOWNLOAD_ID` explains policy blockers and observed waiting progress.
 `actions` records completed and uncertain effects. Verify uncertain work in
-Sonarr using its command/history/current files. This first release provides no
+Sonarr using its command/history/current files. The service provides no
 automatic uncertainty override or destructive state-reset command. Fix mapping,
 permissions, media inspection, or ambiguous matches in Sonarr. Complete queue
 absence can resolve an untouched issue externally, but cannot prove an import

@@ -112,6 +112,55 @@ def main():
             assert query("show", "fake-download")["eligible_elapsed_ns"] >= issue["eligible_elapsed_ns"]
             assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "0"
             checks += ["restart-persistence", "bounded-shutdown"]
+            run("podman", "stop", "--time", "30", app)
+            run("podman", "rm", app)
+            configuration = config_dir / "config.yaml"
+            configuration.write_text(configuration.read_text().replace("wait: 2s", "wait: 1h"))
+            start()
+            ready()
+            # Same-container control uses the existing private state mount. The
+            # service remains dry-run after one explicitly authorized request.
+            preview = query("trigger", "--dry-run", "--override-wait", "--download-id", "fake-download")
+            assert preview["mode"] == "preview" and preview["exit_code"] == 0
+            assert preview["items"][0]["disposition"] == "would_import"
+            assert preview["items"][0]["wait_bypassed"]
+            assert not query("triggers")["receipts"]
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "0"
+            live = query("trigger", "--execute", "--override-wait", "--download-id", "fake-download")
+            assert live["exit_code"] == 0 and live["items"][0]["disposition"] == "pending"
+            request_id = live["request_id"]
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                receipt = query("triggers", "--request-id", request_id)["receipts"][0]
+                if receipt["report"]["items"][0]["effects"][0]["outcome"] == "verified":
+                    break
+                time.sleep(0.2)
+            else:
+                raise AssertionError("manual import failed correlated verification in background dry-run")
+            assert query("status")["dry_run"]
+            assert "smoke-secret-never-export" not in json.dumps(live)
+            assert "smoke-secret-never-export" not in json.dumps(receipt)
+            assert "smoke-secret-never-export" not in run("podman", "logs", app).stderr
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "1"
+            assert query("actions")[0]["request_id"] == request_id
+            empty = run("podman", "exec", app, "/sonarr-remediator", "trigger", "--download-id", "missing", "--json", check=False)
+            assert empty.returncode == 2 and json.loads(empty.stdout)["items"][0]["disposition"] == "not_present"
+            invalid_trigger = run("podman", "exec", app, "/sonarr-remediator", "trigger", "--dry-run=false", "--json", check=False)
+            assert invalid_trigger.returncode == 1 and json.loads(invalid_trigger.stdout)["exit_code"] == 1
+            run("podman", "exec", fake, "/fake-sonarr", "delay-preview")
+            began = time.monotonic()
+            cancelled = run("podman", "exec", app, "/sonarr-remediator", "trigger", "--timeout", "100ms", "--json", check=False)
+            assert cancelled.returncode == 1 and json.loads(cancelled.stdout)["exit_code"] == 1
+            assert time.monotonic() - began < 3, "manual timeout did not bound client work"
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "1"
+            run("podman", "stop", "--time", "30", app)
+            run("podman", "rm", app)
+            start()
+            ready()
+            assert query("triggers", "--request-id", request_id)["receipts"][0]["attempt_ids"]
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "1"
+            checks += ["manual-preview", "manual-one-off-dry-run", "manual-correlated-verification",
+                       "manual-receipt-restart", "manual-exit-codes", "manual-timeout"]
             # A config error and unreadable state must fail before observation/action.
             invalid = run("podman", "run", "--rm", "--network", network, "--read-only",
                           "--cap-drop=all", "--security-opt=no-new-privileges", args.image,

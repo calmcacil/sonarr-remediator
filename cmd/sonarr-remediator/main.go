@@ -14,15 +14,20 @@ import (
 	"time"
 
 	"github.com/calmcacil/sonarr-remediator/internal/config"
+	"github.com/calmcacil/sonarr-remediator/internal/control"
 	"github.com/calmcacil/sonarr-remediator/internal/service"
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	"github.com/calmcacil/sonarr-remediator/internal/state"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	if e := execute(os.Args[1:], os.Stdout, os.Stderr); e != nil {
+		var exit *exitError
+		if errors.As(e, &exit) {
+			os.Exit(exit.code)
+		}
 		fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
 	}
@@ -36,6 +41,9 @@ func execute(args []string, out, errOut io.Writer) error {
 	if command == "version" {
 		fmt.Fprintln(out, version)
 		return nil
+	}
+	if command == "trigger" || command == "triggers" {
+		return manualCommand(command, args, out, errOut)
 	}
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(errOut)
@@ -101,7 +109,16 @@ func execute(args []string, out, errOut io.Writer) error {
 			case <-stopped:
 			}
 		}()
-		return service.New(c, client, store, log).Run(ctx)
+		observer := service.New(c, client, store, log)
+		controller, controlErr := control.Start(ctx, c.StatePath, c.Identity(), observer.Request)
+		if controlErr != nil {
+			store.Data.Status.ManualControl = "unavailable: " + controlErr.Error()
+			log.Warn("manual control unavailable", "reason", controlErr.Error())
+		} else {
+			store.Data.Status.ManualControl = "available"
+			defer controller.Close()
+		}
+		return observer.Run(ctx)
 	}
 	switch command {
 	case "status", "issues", "show", "actions", "healthcheck":
@@ -169,6 +186,7 @@ func execute(args []string, out, errOut io.Writer) error {
 		if v.ReadFailure != "" {
 			fmt.Fprintln(out, "Required read failure:", v.ReadFailure)
 		}
+		fmt.Fprintln(out, "Manual control:", v.ManualControl)
 	case []*state.Issue:
 		for _, i := range v {
 			fmt.Fprintf(out, "%s  %s  %s\n", i.DownloadID, i.State, i.Reason)

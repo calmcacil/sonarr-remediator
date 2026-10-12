@@ -37,6 +37,12 @@ type cachedRead struct {
 
 func (c *Client) BeginCycle() { c.cache = make(map[string]cachedRead) }
 
+// ForCycle keeps the configured client immutable while sharing its connection
+// pool. The request owns the new read cache and explicit mutation boundary.
+func (c *Client) ForCycle(dryRun bool) *Client {
+	return &Client{base: c.base, key: c.key, http: c.http, dryRun: dryRun}
+}
+
 func New(raw, key string, timeout time.Duration, dry bool) (*Client, error) {
 	u, e := url.Parse(raw)
 	if e != nil || u.Host == "" || u.User != nil {

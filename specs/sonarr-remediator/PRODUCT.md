@@ -42,6 +42,9 @@ exposes no web server or network port and requires no media-directory mount.
    requires an explicit setting. Import recovery is enabled within active mode
    by default; cleanup, blocklisting, and replacement search each default off.
    Their effective settings and coupled effects are visible at startup.
+   [Manual triggers](../manual-trigger/PRODUCT.md) add an explicit one-request
+   execution exception and optional initial-wait bypass. Scheduled cycles keep
+   their configured mode, waits and all other safety gates.
 
 5. Enabled cleanup always asks Sonarr to remove the download from its download
    client, which can delete downloaded data. There is no queue-only cleanup
@@ -231,6 +234,9 @@ exposes no web server or network port and requires no media-directory mount.
     commands. They offer human-readable output and JSON, perform no Sonarr
     calls, and do not start background work. IDs in these commands are Sonarr
     download IDs or documented local issue identifiers, not release hashes.
+    `triggers` also reads local live-request receipts. `trigger` requests one
+    serialized cycle from the existing observer over private local control and
+    defaults to a preview that does not persist state.
 
 38. Logs and query output identify the download, affected episodes, action,
     reason, waits, attempted/verified outcome, and blockers. Repeated unchanged
