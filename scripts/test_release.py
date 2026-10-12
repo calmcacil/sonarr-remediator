@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import pathlib
+import stat
 import shutil
 import tempfile
 import unittest
@@ -287,6 +288,20 @@ class PromotionTests(unittest.TestCase):
         with patch.object(release, "rootless", return_value={"host": {"arch": "amd64"}}), patch.object(release, "command") as command:
             self.assertEqual(release.publish_component(self.plan, "amd64", self.root, self.registry), image["manifest"])
             command.assert_not_called()
+
+    def test_private_auth_file_is_valid_before_login_and_token_is_stdin_only(self):
+        def login(*args, input=None):
+            path = pathlib.Path(args[args.index("--authfile") + 1])
+            self.assertEqual(json.loads(path.read_text()), {"auths": {}})
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(input, "controlled-test-token")
+            self.assertNotIn(input, args)
+            return "Login Succeeded"
+
+        with patch.dict("os.environ", {"GITHUB_ACTOR": "operator", "GH_TOKEN": "controlled-test-token"}), \
+                patch.object(release, "command", side_effect=login):
+            with tempfile.TemporaryDirectory() as directory:
+                self.assertEqual(release.auth_file(directory), pathlib.Path(directory) / "auth.json")
 
 
 if __name__ == "__main__":
