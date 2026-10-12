@@ -1,6 +1,6 @@
 services:
   remediator:
-    image: ghcr.io/calmcacil/sonarr-remediator:v0.1.0
+    image: ghcr.io/calmcacil/sonarr-remediator:v0.1.1
     build:
       context: .
       dockerfile: Containerfile

@@ -60,7 +60,7 @@ func (s *Service) verify(ctx context.Context, a *state.Attempt, queue []sonarr.Q
 			}
 			if intended != nil {
 				for _, h := range history {
-					if h.EventType == "downloadFolderImported" && h.EpisodeID == eid && h.SeriesID == intended.SeriesID && !h.Date.Before(a.Started) && !h.Date.After(now) && h.Data["droppedPath"] == intended.Path && h.Data["importedPath"] != "" {
+					if h.EventType == "downloadFolderImported" && h.EpisodeID == eid && h.SeriesID == intended.SeriesID && eventWithinAttempt(h.Date, a.Started, now) && h.Data["droppedPath"] == intended.Path && h.Data["importedPath"] != "" {
 						if !slices.Contains(a.VerifiedEpisodes, eid) {
 							a.VerifiedEpisodes = append(a.VerifiedEpisodes, eid)
 							sort.Ints(a.VerifiedEpisodes)
@@ -86,7 +86,7 @@ func (s *Service) verify(ctx context.Context, a *state.Attempt, queue []sonarr.Q
 				continue
 			}
 			for _, h := range history {
-				if h.EventType == "downloadFolderImported" && h.EpisodeID == eid && h.SeriesID == ep.SeriesID && !h.Date.Before(a.Started) && !h.Date.After(now) && h.Data["droppedPath"] == intended.Path && h.Data["importedPath"] == f.Path {
+				if h.EventType == "downloadFolderImported" && h.EpisodeID == eid && h.SeriesID == ep.SeriesID && eventWithinAttempt(h.Date, a.Started, now) && h.Data["droppedPath"] == intended.Path && h.Data["importedPath"] == f.Path {
 					verified = append(verified, eid)
 					break
 				}
@@ -114,7 +114,7 @@ func (s *Service) verify(ctx context.Context, a *state.Attempt, queue []sonarr.Q
 			}
 			failed := map[int]bool{}
 			for _, h := range hs {
-				if h.EventType == "downloadFailed" && h.SourceTitle == a.Title && !h.Date.Before(a.Started) && !h.Date.After(now) && slices.Contains(a.Decision.EpisodeIDs, h.EpisodeID) && slices.Contains(a.Decision.SeriesIDs, h.SeriesID) {
+				if h.EventType == "downloadFailed" && h.SourceTitle == a.Title && eventWithinAttempt(h.Date, a.Started, now) && slices.Contains(a.Decision.EpisodeIDs, h.EpisodeID) && slices.Contains(a.Decision.SeriesIDs, h.SeriesID) {
 					failed[h.EpisodeID] = true
 				}
 			}
@@ -125,7 +125,7 @@ func (s *Service) verify(ctx context.Context, a *state.Attempt, queue []sonarr.Q
 			covered := map[int]bool{}
 			counts := map[int]int{}
 			for _, b := range entries {
-				if b.SourceTitle != a.Title || b.Date.Before(a.Started) || b.Date.After(now) || !slices.Contains(a.Decision.SeriesIDs, b.SeriesID) {
+				if b.SourceTitle != a.Title || !eventWithinAttempt(b.Date, a.Started, now) || !slices.Contains(a.Decision.SeriesIDs, b.SeriesID) {
 					continue
 				}
 				for _, eid := range b.EpisodeIDs {
@@ -202,6 +202,15 @@ func (s *Service) verify(ctx context.Context, a *state.Attempt, queue []sonarr.Q
 	}
 	return nil
 }
+
+func eventWithinAttempt(date, started, now time.Time) bool {
+	// Sonarr can omit fractional seconds; compare the lower bound at that precision.
+	if date.Nanosecond() == 0 {
+		started = started.Truncate(time.Second)
+	}
+	return !date.Before(started) && !date.After(now)
+}
+
 func (s *Service) current(ctx context.Context, id int) (sonarr.Episode, sonarr.EpisodeFile, sonarr.Profile, error) {
 	ep, e := s.Client.Episode(ctx, id)
 	if e != nil {

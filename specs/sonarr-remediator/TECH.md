@@ -174,6 +174,13 @@ require unambiguous corresponding failed/blocklist evidence before marking the
 whole operation complete. Source shows blocklist responses have no download-ID
 field, so title/series/episode/date correlation must be unambiguous.
 
+Sonarr history and blocklist timestamps may have whole-second precision. For
+those events only, truncate the attempt's lower time bound to the same second;
+retain exact lower bounds for events with fractional seconds. Reject events in
+earlier seconds and events after the current scan. This time comparison does
+not replace the required identity, path, changed-file and current-profile checks.
+Preserved pending attempts can reconcile during dry-run without resubmission.
+
 Verification has a 10-minute deadline. Timeout is uncertain, not a
 retryable failure. Continue read-only reconciliation later; never automatically
 replay an ambiguous command or deletion. Known command failure can use the
