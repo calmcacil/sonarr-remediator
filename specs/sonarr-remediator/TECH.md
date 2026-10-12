@@ -233,7 +233,9 @@ timestamps or mere response ordering cannot reset retry protection.
 Bind pending effects and cooldowns to the download and every affected episode.
 The continuation search is part of its removal operation and can bypass only
 that operation's successful-removal cooldown, never another operation's lock
-or cooldown. Prune finished records after 30 days unless needed by current
+or cooldown during background work. An explicit manual `--override-wait` request
+also bypasses completed-action cooldowns, while all pending-effect locks remain
+in force. Prune finished records after 30 days unless needed by current
 safety state. Any write failure stops further mutations; recovery first
 reconciles outstanding attempts.
 

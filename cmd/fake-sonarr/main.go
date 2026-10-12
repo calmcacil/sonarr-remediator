@@ -25,8 +25,12 @@ func main() {
 		fmt.Println(v["mutations"])
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "delay-preview" {
-		r, e := http.Post("http://127.0.0.1:8989/fixture/preview-delay", "application/json", nil)
+	if len(os.Args) > 1 && (os.Args[1] == "delay-preview" || os.Args[1] == "next-download") {
+		path := "preview-delay"
+		if os.Args[1] == "next-download" {
+			path = "next-download"
+		}
+		r, e := http.Post("http://127.0.0.1:8989/fixture/"+path, "application/json", nil)
 		if e != nil {
 			os.Exit(1)
 		}
@@ -52,6 +56,11 @@ func main() {
 		var v any
 		if r.Method == "POST" && r.URL.Path == "/fixture/preview-delay" {
 			delayPreview = true
+			w.WriteHeader(204)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/fixture/next-download" {
+			row["downloadId"], preview["downloadId"] = "second-download", "second-download"
 			w.WriteHeader(204)
 			return
 		}

@@ -539,7 +539,7 @@ func (s *Service) gate(id string, d policy.Decision, now time.Time, parent int64
 		if (same || overlap) && a.Pending() {
 			return "pending/uncertain action protects download or episode"
 		}
-		if a.ID != parent && (same || overlap) && (a.Outcome == "verified" || a.Outcome == "submitted") && now.Sub(a.Finished) < s.Config.Limits.EpisodeCooldown {
+		if a.ID != parent && (same || overlap) && (a.Outcome == "verified" || a.Outcome == "submitted") && now.Sub(a.Finished) < s.Config.Limits.EpisodeCooldown && !(s.request != nil && s.request.OverrideWait) {
 			return "episode cooldown"
 		}
 		if same && d.Kind == "import" && a.Kind == "import" && a.Fingerprint == d.Fingerprint {

@@ -208,6 +208,8 @@ exposes no web server or network port and requires no media-directory mount.
     or uncertain action prevents competing actions for its download and
     episodes. Search that continues a verified removal is part of that same
     operation and may proceed without waiting for its own removal cooldown.
+    An explicit manual `--override-wait` request may bypass completed-action
+    cooldowns; pending and uncertain actions remain protected.
 
 33. Observations, eligibility progress, attempts, unresolved outcomes, retry
     timing, cooldowns, and rolling budgets survive restart. A writable local

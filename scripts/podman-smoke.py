@@ -48,7 +48,7 @@ def main():
         (config_dir / "key").chmod(0o600)
         (config_dir / "config.yaml").write_text(
             "sonarr:\n  url: http://sonarr:8989\n  api_key_file: /config/key\n"
-            "poll_interval: 1s\nrecovery:\n  wait: 2s\n"
+            "poll_interval: 1s\nrecovery:\n  wait: 2s\ncleanup:\n  enabled: true\n"
         )
         (config_dir / "config.yaml").chmod(0o600)
         try:
@@ -152,6 +152,13 @@ def main():
             cancelled = run("podman", "exec", app, "/sonarr-remediator", "trigger", "--timeout", "100ms", "--json", check=False)
             assert cancelled.returncode == 1 and json.loads(cancelled.stdout)["exit_code"] == 1
             assert time.monotonic() - began < 3, "manual timeout did not bound client work"
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "1"
+            # A second download is redundant with the just-imported library file.
+            # Preview must bypass the first download's completed-action cooldown.
+            run("podman", "exec", fake, "/fake-sonarr", "next-download")
+            cleanup_result = run("podman", "exec", app, "/sonarr-remediator", "trigger", "--dry-run", "--override-wait", "--download-id", "second-download", "--json", check=False)
+            cleanup_preview = json.loads(cleanup_result.stdout)
+            assert cleanup_result.returncode == 0 and cleanup_preview["items"][0]["disposition"] == "would_remove_redundant", cleanup_preview
             assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "1"
             run("podman", "stop", "--time", "30", app)
             run("podman", "rm", app)
