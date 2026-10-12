@@ -3,16 +3,21 @@
 Status: implemented for target release 0.2.0. Publication remains a
 separate operator action.
 
+Patch 0.2.1 extends the explicit wait override to episode cooldowns without
+requiring deployment configuration changes or a state migration.
+
 ## Summary
 
 Operators can preview or request one immediate recovery/cleanup cycle without
 changing the running service's configuration. An explicit wait override skips
-initial recovery and cleanup delays for that request while retaining policy,
-permissions, budgets, retry protection and correlated outcome verification.
+initial recovery and cleanup delays and episode cooldowns for that request while
+retaining policy, permissions, budgets, retry protection and correlated outcome
+verification.
 
 This extends [the base product contract](../sonarr-remediator/PRODUCT.md).
 The manual request is an explicit exception to its background dry-run and initial
-wait rules; the remaining safety and deployment boundaries continue to apply.
+wait and episode cooldown rules; the remaining safety and deployment boundaries
+continue to apply.
 
 ## Behavior
 
@@ -57,9 +62,11 @@ wait rules; the remaining safety and deployment boundaries continue to apply.
 
 ### Wait Override and Permissions
 
-8. Without `--override-wait`, the configured observed-eligibility waits apply.
-   `--override-wait` skips only `recovery.wait` and `cleanup.wait` for this manual
-   request. It does not lower the stored waits or fabricate elapsed observation.
+8. Without `--override-wait`, the configured observed-eligibility waits and episode
+   cooldowns apply. `--override-wait` skips `recovery.wait`, `cleanup.wait` and
+   `limits.episode_cooldown` for this manual request, including cooldowns from
+   another download affecting the same episode. It does not lower the stored
+   waits or fabricate elapsed observation.
 
 9. `trigger --dry-run --override-wait` previews what an equivalent one-off live
    request could submit now. `trigger --execute --override-wait` may submit that
@@ -75,7 +82,7 @@ wait rules; the remaining safety and deployment boundaries continue to apply.
     profile rules, preview rejections and competing-download protections remain
     in force. There is no force-import, force-delete or policy-override flag.
 
-12. Wait override does not bypass episode cooldowns, known-failure retry spacing,
+12. Wait override does not bypass known-failure retry spacing,
     recovery attempt exhaustion, mutation budgets, state/read failures, or
     pending, partial and uncertain outcomes. Blocked work is explained and kept.
 

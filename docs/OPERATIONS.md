@@ -88,10 +88,14 @@ from the actions that fit this cycle's shared budgets.
 
 `--execute` authorizes one live cycle even with `dry_run: true`; scheduled work
 keeps its configured mode. `--dry-run=false` is rejected. An explicit
-`--override-wait` skips only `recovery.wait` and `cleanup.wait`. It does not alter
+`--override-wait` skips `recovery.wait`, `cleanup.wait` and, since version 0.2.1,
+`limits.episode_cooldown` for this request. This allows separate redundant downloads
+of the same episode to be removed in successive manual requests. It does not alter
 stored progress or bypass protected tracked states, permissions, complete episode
-membership, competition, cooldowns, retry spacing, attempt exhaustion or uncertain
-effects. A fresh live evaluation can differ from an earlier preview.
+membership, competition, retry spacing, attempt exhaustion, mutation budgets or
+uncertain effects. Background work and manual requests without the flag still
+respect episode cooldowns. A fresh live evaluation can differ from an earlier
+preview.
 
 Repeated `--download-id` flags select exact Sonarr download IDs, deduplicated
 without changing the IDs. Queue-row IDs and titles are not selectors. Omitting

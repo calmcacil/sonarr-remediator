@@ -180,8 +180,71 @@ func TestManualLiveOverrideIsOneOffAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestManualOverrideSkipsEpisodeCooldown(t *testing.T) {
+	for _, outcome := range []string{"verified", "submitted"} {
+		for _, tc := range []struct {
+			name     string
+			live     bool
+			override bool
+		}{
+			{name: "background"},
+			{name: "preview"},
+			{name: "preview-override", override: true},
+			{name: "execute", live: true},
+			{name: "execute-override", live: true, override: true},
+		} {
+			t.Run(outcome+"/"+tc.name, func(t *testing.T) {
+				s, f, now, _ := setup(t, true)
+				s.Config.Cleanup.Enabled = true
+				f.episode.HasFile, f.episode.EpisodeFileID = pointer(true), pointer(200)
+				f.file = sonarr.EpisodeFile{ID: 200, SeriesID: f.series.ID, Path: "/library/file.mkv", Quality: f.preview.Quality, Score: f.preview.Score, Formats: f.preview.Formats}
+				cycle(t, s, now, 0)
+				i := s.Store.Data.Issues[f.row.DownloadID]
+				i.Elapsed = s.Config.Cleanup.Wait
+				previous := state.Attempt{
+					ID: 1, DownloadID: "previous-download", Kind: "remove_redundant", Outcome: outcome,
+					Started: *now, Finished: *now, Decision: i.Decision,
+				}
+				if outcome == "submitted" {
+					previous.Kind, previous.Decision.Kind = "search", "search"
+				}
+				s.Store.Data.Attempts = append(s.Store.Data.Attempts, previous)
+				if tc.name == "background" {
+					cycle(t, s, now, time.Minute)
+					if i.Reason != "episode cooldown" || len(f.mutations) != 0 {
+						t.Fatalf("background bypassed cooldown: reason=%s mutations=%v", i.Reason, f.mutations)
+					}
+					return
+				}
+				r := s.Manual(context.Background(), request(t, tc.live, tc.override, f.row.DownloadID))
+				if !tc.override {
+					if r.ExitCode != 2 || r.Items[0].Reason != "episode cooldown" || len(f.mutations) != 0 {
+						t.Fatalf("manual run bypassed cooldown without override: %+v mutations=%v", r, f.mutations)
+					}
+					return
+				}
+				if r.ExitCode != 0 || r.Items[0].Action != "remove_redundant" {
+					t.Fatalf("override did not bypass cooldown: %+v", r)
+				}
+				if tc.live {
+					if len(f.mutations) != 1 || f.mutations[0] != "DELETE queue/1" || len(r.Items[0].Effects) != 1 {
+						t.Fatalf("redundant removal missing: %+v mutations=%v", r, f.mutations)
+					}
+					for _, flag := range []string{"removeFromClient=true", "blocklist=false", "skipRedownload=true"} {
+						if !strings.Contains(f.deleteQuery, flag) {
+							t.Fatalf("missing removal flag %s: %s", flag, f.deleteQuery)
+						}
+					}
+				} else if r.Items[0].Disposition != "would_remove_redundant" || len(f.mutations) != 0 {
+					t.Fatalf("preview did not predict removal without mutating: %+v mutations=%v", r, f.mutations)
+				}
+			})
+		}
+	}
+}
+
 func TestManualOverridePreservesSafetyGates(t *testing.T) {
-	for _, scenario := range []string{"permission", "protected", "cooldown", "retry", "exhausted", "uncertain", "hour-budget", "read-failure", "absent"} {
+	for _, scenario := range []string{"permission", "protected", "retry", "exhausted", "uncertain", "uncertain-other-download", "hour-budget", "read-failure", "absent"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, f, now, _ := setup(t, true)
 			cycle(t, s, now, 0)
@@ -193,9 +256,6 @@ func TestManualOverridePreservesSafetyGates(t *testing.T) {
 				s.Config.Recovery.Enabled = false
 			case "protected":
 				f.row.TrackedState = "importPending"
-			case "cooldown":
-				a.Outcome = "verified"
-				s.Store.Data.Attempts = append(s.Store.Data.Attempts, a)
 			case "retry":
 				s.Store.Data.Attempts = append(s.Store.Data.Attempts, a)
 			case "exhausted":
@@ -204,6 +264,10 @@ func TestManualOverridePreservesSafetyGates(t *testing.T) {
 					s.Store.Data.Attempts = append(s.Store.Data.Attempts, a)
 				}
 			case "uncertain":
+				a.Outcome = "uncertain"
+				s.Store.Data.Attempts = append(s.Store.Data.Attempts, a)
+			case "uncertain-other-download":
+				a.DownloadID = "other-download"
 				a.Outcome = "uncertain"
 				s.Store.Data.Attempts = append(s.Store.Data.Attempts, a)
 			case "hour-budget":

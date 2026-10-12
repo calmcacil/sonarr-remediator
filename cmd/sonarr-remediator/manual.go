@@ -105,7 +105,7 @@ func manualCommandRun(command string, args []string, out, errOut io.Writer) erro
 	}
 	dry := fs.Bool("dry-run", true, "preview only (default)")
 	live := fs.Bool("execute", false, "permit live work for this request")
-	override := fs.Bool("override-wait", false, "skip initial recovery/cleanup waits only")
+	override := fs.Bool("override-wait", false, "skip initial recovery/cleanup waits and episode cooldowns")
 	timeout := fs.Duration("timeout", control.MaxTimeout, "end-to-end timeout (maximum 2m)")
 	var ids downloadIDs
 	fs.Var(&ids, "download-id", "exact Sonarr download ID; repeat to select more")

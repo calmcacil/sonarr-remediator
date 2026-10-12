@@ -3,6 +3,9 @@
 Status: implemented for target release 0.2.0. Implements
 [PRODUCT.md](PRODUCT.md). Publication remains a separate operator action.
 
+Patch 0.2.1 extends the cycle-local wait override to the shared episode cooldown
+gate. Protocol and state schemas remain unchanged.
+
 ## Context
 
 Research baseline: `b98f6be6c31b48f5e16c83353bf6fe6fbbefa6ca` (v0.1.1).
@@ -99,7 +102,9 @@ Share the following sequence between preview and execution:
 3. Reconcile outstanding effects using reads. Preview performs this and all other
    projections on a deep isolated view, not maps/slices aliased to live state.
 4. Evaluate policy, then initial waiting, then existing pending/retry/cooldown/hour
-   gates. Skip only the initial wait comparison when explicitly requested.
+   gates. An explicit manual wait override skips the initial wait comparison and
+   completed-action episode cooldowns in both planning and fresh execution checks.
+   Pending/partial/uncertain effects, retry spacing, exhaustion and budgets still apply.
    Do not set `Elapsed` to the threshold, rewrite due timestamps to pretend age,
    or change normal waiting configuration.
 5. Sort already-due candidates by the existing due key; sort override-only work
@@ -199,7 +204,7 @@ uses source review; implementation must satisfy the following before publication
 | --- | --- |
 | 1-7, 31-33 | CLI parser/default/conflict tests; real same-container IPC; stopped/busy/incompatible daemon; exact target grouping and no selector-based competition bypass |
 | 2, 17, 19 | Capture GET-only preview, byte-for-byte unchanged state records/progress/budgets, isolated maps/slices, budget-aware ordering, and live reevaluation after a changed preview |
-| 3, 8-15, 23 | Manual execution while background dry-run stays true; initial-wait-only bypass; first eligible observation; disabled policies, cooldown, retry/exhaustion and uncertain work still blocked; search continuation scope |
+| 3, 8-15, 23 | Manual execution while background dry-run stays true; initial-wait and episode-cooldown bypass; background/no-override cooldown preserved; first eligible observation; disabled policies, retry/exhaustion and uncertain work still blocked; search continuation scope |
 | 16-22 | Multi-target plan with one selected default request; shared hour budget across manual/automatic imports/removals/search; coupled client deletion/blocklist output; acknowledged versus correlated outcomes |
 | 24-28 | Deterministic barriers for background/manual serialization, admission busy, timer fairness, queued/active cancellation, lost response, duplicate IDs and crash before/after transmission; no replay on restart |
 | 26-30, 34 | Atomic schema migration failure injection and integrity checks; all prior history retained; receipt/attempt transaction ordering; dry-run reconciliation; retention, older-reader rejection, JSON shape and exact exit codes |
@@ -258,3 +263,22 @@ mise tools. All Sonarr interactions used synthetic fixtures.
 The schema-2 upgrade and v0.1.x downgrade incompatibility are documented in
 `docs/OPERATIONS.md`. Deployment startup, healthcheck, mounts, permissions and
 container identity remain unchanged apart from selecting the 0.2.0 image.
+
+### Patch 0.2.1 Verification
+
+Verified locally on 2026-10-12 with synthetic Sonarr data:
+
+- The cooldown regression failed against the original gate and passed after the
+  change. Preview and execution bypass verified/submitted cooldowns only with
+  `--override-wait`; background/no-override cooldowns and uncertain overlapping
+  actions remain protected.
+- `mise run check` passed, including race tests, 33 Python tests and both target
+  vulnerability checks. `mise run build` produced a static arm64 binary reporting
+  `0.2.1`.
+- `localhost/sonarr-remediator:0.2.1` passed all 18 native rootless arm64 acceptance
+  checks. The packaged CLI previewed a second download as redundant during the
+  first download's verified-import cooldown without sending another mutation.
+  Runtime evidence is in ignored `artifacts/0.2.1-runtime.json`.
+
+Publication and deployment were not performed. Native amd64 runtime acceptance
+and committed-source promotion evidence remain required in CI before release.
