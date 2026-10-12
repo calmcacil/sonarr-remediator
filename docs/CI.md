@@ -36,6 +36,11 @@ The Podman jobs use native `ubuntu-24.04` and `ubuntu-24.04-arm` runners. Runtim
 checks use fake Sonarr, private rootless namespaces, and no production credentials.
 All actions are SHA-pinned; mise itself and its runtimes/checkers are pinned.
 
+Runtime promotion evidence includes manual preview, one-off execution during
+background dry-run, correlated verification, receipt persistence, exit codes and
+timeout checks. A source regression requires the smoke harness and promotion
+validator to name the same complete set. Missing or unknown checks block promotion.
+
 CI tests the PR merge ref. Checkout depth two preserves both parents for verifying
 the event's head and base. Cache-free production builds avoid a demonstrated
 Podman 5.4.2 bug that reused cached LABEL values after revision build-argument

@@ -19,6 +19,8 @@ RUNTIME_CHECKS = {
     "non-root", "private-state", "readonly-root-config", "no-ports-media-socket",
     "dry-run-zero-mutations", "local-queries", "health", "recommendation-deduplication",
     "restart-persistence", "bounded-shutdown", "config-permission-failure", "state-permission-failure",
+    "manual-preview", "manual-one-off-dry-run", "manual-correlated-verification",
+    "manual-receipt-restart", "manual-exit-codes", "manual-timeout",
 }
 VERSION_PATTERN = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
 

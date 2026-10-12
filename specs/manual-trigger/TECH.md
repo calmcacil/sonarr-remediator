@@ -229,7 +229,7 @@ Publishing a release is separate from implementing and validating the feature.
 Verified on 2026-10-12 against the implementation worktree with the project-pinned
 mise tools. All Sonarr interactions used synthetic fixtures.
 
-- `mise run check` passed: formatting, vet, the Go race suite, 32 Python tests,
+- `mise run check` passed: formatting, vet, the Go race suite, 33 Python tests,
   Renovate validation, Actions lint and reachable-vulnerability checks for Linux
   amd64/arm64. No reachable vulnerabilities were reported.
 - Manual regressions cover isolated preview state, default waits and first-observation
@@ -248,6 +248,8 @@ mise tools. All Sonarr interactions used synthetic fixtures.
   background dry-run verified the import; receipts survived restart; the manual
   timeout and exit-code checks passed. Shutdown took 0.204 seconds.
   Local runtime evidence is in ignored `artifacts/manual-trigger-runtime.json`.
+  The promotion validator requires all 18 named checks; a regression prevents
+  drift between the harness and the receipt contract.
 - `docker compose config --quiet` passed. No rootless Docker daemon is available
   on this host, so Docker runtime acceptance was not performed. Native amd64
   container acceptance and committed-source release evidence remain CI checks
