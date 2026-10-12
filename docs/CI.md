@@ -126,6 +126,8 @@ GitHub Actions check. The tagged squash tree must equal the recorded tested merg
 tree, and the recorded merge parents must equal the PR base/head. All artifact,
 archive, runtime, image, and version identities are revalidated before each write
 job. The publisher does not build, execute images, or run service tests.
+Squash-only protection is verified through main's public effective-rules API;
+read-only repository views omit the administrative merge-method settings.
 
 Native publisher jobs load archives with rootless Podman and verify image config
 identities. Rootless Skopeo `copy --preserve-digests` transfers original OCI bytes;
