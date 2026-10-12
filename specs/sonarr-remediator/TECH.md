@@ -144,13 +144,28 @@ unknown formats and stale scores defer action.
 
 ### Cleanup and Outcome Verification
 
-Classify only a fixed, source-verified catalog of reasons. Initial unusable
-reasons are exactly `Sample` and `No audio tracks detected`.
-`Unable to determine if file is a sample`, TheXEM mapping, access errors, empty
-previews, and unknown wording are preserved. Rejection `type=permanent` is not
-a deletion category. Redundancy additionally requires complete intended scope
-and acceptable current files for every intended episode; the two captured
-multi-file cases fail that requirement.
+Preserve the fixed `Sample`/`No audio tracks detected` unusable classifier and
+redundancy proof for their specific operations. When strict policy defers,
+`RejectedCleanup` can propose `remove_blocked` from any current nonempty Sonarr
+rejection with a valid temporary/permanent type. Validate preview/download
+identity, paths, verdict presence and configured client/series scope; complete
+episode membership, quality comparison and an independent usability verdict are
+not required. One rejected media file can qualify the whole shared job. Generic
+blocked removal always suppresses blocklisting and replacement search.
+
+Persist `sonarr_rejected`, `rejected_elapsed_ns` and `rejected_last_seen` as optional observation fields
+in schema 2. Missing fields start with zero rejected progress. Accrue only between
+successful rejected observations; ignore downtime/read gaps, preserve progress
+across restart, and reset on rejection clearing, identity/eligibility change or
+absence. Rejection wording changes alone do not reset continuous blocking.
+Each download's last rejection observation supplies its clock; an unrelated
+selected manual cycle cannot consume or fabricate its waiting progress.
+Cleanup scheduling and manual wait reports use this clock for rejected jobs,
+instead of their longer general eligibility history. A preview uses a projection;
+manual override may skip the rejected wait without modifying persisted progress.
+Fresh execution repeats queue/preview policy and fingerprint checks. Verify
+`remove_blocked` only after acknowledgement plus complete shared-download absence;
+it creates no replacement-search continuation.
 
 Sonarr's [queue controller](https://github.com/Sonarr/Sonarr/blob/cab419ade8ac7fcab5bf80394ee492abd35d5f5a/src/Sonarr.Api.V3/Queue/QueueController.cs)
 defines independent parameters. Always send them explicitly:
@@ -226,8 +241,14 @@ requires reconciling later effects before considering an older stopped-state bac
 Accrue waiting time only between successful eligible observations. Credit at
 most one polling interval per pair; do not credit the interval across process
 restart or a failed/gapped scan. Persist accrued progress; reset when an
-ineligible state is actually observed. Fingerprints include file identities,
-target episodes, quality/revision, custom formats, and material verdict changes;
+ineligible state is actually observed. Completed `importPending` rows join
+`importBlocked` and `importFailed` in `QueueRow.Eligible`; the existing recovery
+and cleanup waits bound automatic submissions without a new setting or schema.
+Their previews, matching and rejections use the same policy as other candidates.
+Other import-pending downloads remain competition evidence, and `importing`
+resets waiting progress and fails fresh execution checks. Fingerprints include
+file identities, target episodes, quality/revision, custom formats, and material
+verdict changes;
 timestamps or mere response ordering cannot reset retry protection.
 
 Bind pending effects and cooldowns to the download and every affected episode.

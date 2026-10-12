@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "stats" {
+	if len(os.Args) > 1 && (os.Args[1] == "stats" || os.Args[1] == "library-id") {
 		r, e := http.Get("http://127.0.0.1:8989/stats")
 		if e != nil {
 			os.Exit(1)
@@ -22,13 +22,19 @@ func main() {
 		if json.NewDecoder(r.Body).Decode(&v) != nil {
 			os.Exit(1)
 		}
-		fmt.Println(v["mutations"])
+		if os.Args[1] == "library-id" {
+			fmt.Println(v["episode_file_id"])
+		} else {
+			fmt.Println(v["mutations"])
+		}
 		return
 	}
-	if len(os.Args) > 1 && (os.Args[1] == "delay-preview" || os.Args[1] == "next-download") {
+	if len(os.Args) > 1 && (os.Args[1] == "delay-preview" || os.Args[1] == "next-download" || os.Args[1] == "reject-download") {
 		path := "preview-delay"
 		if os.Args[1] == "next-download" {
 			path = "next-download"
+		} else if os.Args[1] == "reject-download" {
+			path = "reject-download"
 		}
 		r, e := http.Post("http://127.0.0.1:8989/fixture/"+path, "application/json", nil)
 		if e != nil {
@@ -44,10 +50,11 @@ func main() {
 	mutations, scans := 0, 0
 	var imported time.Time
 	var delayPreview bool
+	var removed bool
 	quality := map[string]any{"quality": map[string]any{"id": 3}, "revision": map[string]any{"version": 1, "real": 0, "isRepack": false}}
 	series := map[string]any{"id": 10, "qualityProfileId": 20, "monitored": true, "seriesType": "standard"}
 	episode := map[string]any{"id": 100, "seriesId": 10, "episodeFileId": 0, "hasFile": false, "monitored": true}
-	row := map[string]any{"id": 1, "downloadId": "fake-download", "seriesId": 10, "episodeId": 100, "downloadClient": "fake-client", "title": "fake-release", "outputPath": "/fake/file.mkv", "status": "completed", "trackedDownloadState": "importBlocked"}
+	row := map[string]any{"id": 1, "downloadId": "fake-download", "seriesId": 10, "episodeId": 100, "downloadClient": "fake-client", "title": "fake-release", "outputPath": "/fake/file.mkv", "status": "completed", "trackedDownloadState": "importPending"}
 	preview := map[string]any{"id": 1, "path": "/fake/file.mkv", "downloadId": "fake-download", "series": series, "episodes": []any{episode}, "quality": quality, "customFormats": []any{}, "customFormatScore": 0, "rejections": []any{}, "languages": []any{map[string]any{"id": 1}}, "indexerFlags": 0, "releaseType": "singleEpisode"}
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -64,8 +71,18 @@ func main() {
 			w.WriteHeader(204)
 			return
 		}
+		if r.Method == "POST" && r.URL.Path == "/fixture/reject-download" {
+			preview["rejections"] = []any{map[string]string{"reason": "Unable to determine if file is a sample", "type": "permanent"}}
+			w.WriteHeader(204)
+			return
+		}
 		if r.Method != "GET" {
 			mutations++
+			if r.Method == "DELETE" && r.URL.Path == "/api/v3/queue/1" && r.URL.Query().Get("blocklist") == "false" && r.URL.Query().Get("skipRedownload") == "true" && r.URL.Query().Get("removeFromClient") == "true" {
+				removed = true
+				w.WriteHeader(204)
+				return
+			}
 			var command struct {
 				Name string `json:"name"`
 			}
@@ -81,13 +98,17 @@ func main() {
 		}
 		switch r.URL.Path {
 		case "/stats":
-			v = map[string]int{"mutations": mutations, "scans": scans}
+			v = map[string]any{"mutations": mutations, "scans": scans, "episode_file_id": episode["episodeFileId"]}
 		case "/api/v3/system/status":
 			v = map[string]string{"version": "4.0.20.3014"}
 		case "/api/v3/queue":
 			scans++
 			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-			v = map[string]any{"page": page, "pageSize": 100, "totalRecords": 1, "records": []any{row}}
+			rows := []any{}
+			if !removed {
+				rows = append(rows, row)
+			}
+			v = map[string]any{"page": page, "pageSize": 100, "totalRecords": len(rows), "records": rows}
 		case "/api/v3/manualimport":
 			if delayPreview {
 				delayPreview = false

@@ -100,7 +100,12 @@ func TestSafetyGatesAndUnusableCatalog(t *testing.T) {
 		{"missing_score", func(o *Observation, c *config.Config) { o.Preview[0].Score = nil }, "defer"},
 		{"missing_verdict", func(o *Observation, c *config.Config) { o.Preview[0].Rejections = nil }, "defer"},
 		{"unknown_preference", func(o *Observation, c *config.Config) { o.Propers = "future" }, "defer"},
-		{"pending", func(o *Observation, c *config.Config) { o.Rows[0].TrackedState = "importPending" }, "defer"},
+		{"pending", func(o *Observation, c *config.Config) { o.Rows[0].TrackedState = "importPending" }, "import"},
+		{"importing", func(o *Observation, c *config.Config) { o.Rows[0].TrackedState = "importing" }, "defer"},
+		{"imported", func(o *Observation, c *config.Config) { o.Rows[0].TrackedState = "imported" }, "defer"},
+		{"downloading_pending", func(o *Observation, c *config.Config) {
+			o.Rows[0].Status, o.Rows[0].TrackedState = "downloading", "importPending"
+		}, "defer"},
 		{"competing", func(o *Observation, c *config.Config) {
 			o.Queue = append(o.Queue, sonarr.QueueRow{ID: 999, DownloadID: "other", TrackedState: "downloading", EpisodeID: ptr(o.Intended[0])})
 		}, "defer"},
@@ -163,11 +168,19 @@ func TestFingerprintStableAcrossOrdering(t *testing.T) {
 }
 
 func TestReviewProtectedCompetition(t *testing.T) {
-	o := captured(t)["download-001"]
-	c := config.Defaults()
-	o.Queue = append(o.Queue, sonarr.QueueRow{ID: 999, DownloadID: "competing", EpisodeID: ptr(o.Intended[0]), Status: "downloading", TrackedState: "importBlocked"})
-	d := Evaluate(c, o)
-	if d.Kind != "defer" {
-		t.Fatalf("protected downloading competitor authorized %s: %s", d.Kind, d.Reason)
+	for _, row := range []sonarr.QueueRow{
+		{Status: "downloading", TrackedState: "importBlocked"},
+		{Status: "completed", TrackedState: "importPending"},
+	} {
+		t.Run(row.Status+"/"+row.TrackedState, func(t *testing.T) {
+			o := captured(t)["download-001"]
+			c := config.Defaults()
+			row.ID, row.DownloadID, row.EpisodeID = 999, "competing", ptr(o.Intended[0])
+			o.Queue = append(o.Queue, row)
+			d := Evaluate(c, o)
+			if d.Kind != "defer" || d.Reason != "competing active or unidentified download" {
+				t.Fatalf("protected competitor authorized %s: %s", d.Kind, d.Reason)
+			}
+		})
 	}
 }

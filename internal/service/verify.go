@@ -97,7 +97,7 @@ func (s *Service) verify(ctx context.Context, a *state.Attempt, queue []sonarr.Q
 			a.Outcome = "partial"
 			a.Reason = "partial correlated import; remaining episodes protected"
 		}
-	case "remove_redundant", "remove_unusable":
+	case "remove_redundant", "remove_unusable", "remove_blocked":
 		absent := true
 		for _, q := range queue {
 			if q.DownloadID == a.DownloadID {

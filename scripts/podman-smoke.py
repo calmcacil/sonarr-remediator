@@ -83,6 +83,7 @@ def main():
             assert status["dry_run"] and status["connectivity"] == "connected"
             issue = query("show", "fake-download")
             assert issue["state"] == "recoverable"
+            assert issue["queue_rows"][0]["trackedDownloadState"] == "importPending"
             assert issue["eligible_elapsed_ns"] >= 2_000_000_000
             assert len(query("issues")) == 1
             actions = query("actions", "--download-id", "fake-download")
@@ -168,6 +169,32 @@ def main():
             assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "1"
             checks += ["manual-preview", "manual-one-off-dry-run", "manual-correlated-verification",
                        "manual-receipt-restart", "manual-exit-codes", "manual-timeout"]
+            run("podman", "exec", fake, "/fake-sonarr", "reject-download")
+            rejected = query("trigger", "--dry-run", "--override-wait", "--download-id", "second-download")
+            assert rejected["items"][0]["disposition"] == "would_remove_blocked", rejected
+            assert rejected["items"][0]["client_deletion_can_delete_data"]
+            assert not rejected["items"][0]["blocklist"] and not rejected["items"][0]["replacement_search"]
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "1"
+            run("podman", "stop", "--time", "30", app)
+            run("podman", "rm", app)
+            configuration.write_text(configuration.read_text().replace("wait: 1h", "wait: 2s").replace(
+                "cleanup:\n  enabled: true\n", "cleanup:\n  enabled: true\n  wait: 2s\n"
+            ) + "dry_run: false\nlimits:\n  episode_cooldown: 1s\n")
+            start()
+            ready()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                cleanup = query("actions", "--download-id", "second-download")
+                if cleanup and cleanup[0]["outcome"] == "verified":
+                    break
+                time.sleep(0.2)
+            else:
+                raise AssertionError("Sonarr-rejected download did not reach verified automatic cleanup")
+            assert cleanup[0]["kind"] == "remove_blocked" and cleanup[0]["removal_verified"]
+            assert not cleanup[0]["decision"]["blocklist"]
+            assert query("show", "second-download")["state"] == "resolved"
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "2"
+            assert run("podman", "exec", fake, "/fake-sonarr", "library-id").stdout.strip() == "200"
             # A config error and unreadable state must fail before observation/action.
             invalid = run("podman", "run", "--rm", "--network", network, "--read-only",
                           "--cap-drop=all", "--security-opt=no-new-privileges", args.image,

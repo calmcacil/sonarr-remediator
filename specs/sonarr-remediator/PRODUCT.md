@@ -75,15 +75,22 @@ exposes no web server or network port and requires no media-directory mount.
    not count as an empty queue and cannot authorize mutations or resolve an
    unseen issue as absent.
 
-10. Initial candidates must be completed and tracked as `importBlocked` or
-    `importFailed`. Queued, paused, downloading, `importPending`, `importing`,
-    and `imported` work remains untouched. Warning/error text and a completed
-    queue label alone do not override a protected tracked state.
+10. Initial candidates must be completed and tracked as `importBlocked`,
+    `importFailed` or `importPending`. Completed import-pending downloads use
+    the same observed-eligibility waits and policy checks as blocked downloads;
+    they are not protected indefinitely by the pending label. Queued, paused,
+    downloading, `importing` and `imported` work remains untouched. Warning/error
+    text and a completed queue label alone do not override those protected states.
 
 11. Recovery waits 15 minutes of observed eligibility by default. Cleanup waits
     at least six hours of observed eligibility. These waits are configurable
     independently. A queue-added timestamp is diagnostic and never substitutes
-    for observing that the download is completed and blocked.
+    for observing that the download is completed in a candidate tracked state.
+    A completed `importPending` download starts accumulating observed eligibility
+    when first seen by this version; its prior queue age does not authorize an
+    immediate automatic action. A valid Sonarr import rejection is also cleanup
+    authority after `cleanup.wait` of observed rejected time, including
+    indeterminate sample detection, mapping and access rejections.
 
 12. Waiting progress survives restart. Unobserved downtime and failed-scan gaps
     do not advance the wait. A changed download identity or an observed return
@@ -137,9 +144,8 @@ exposes no web server or network port and requires no media-directory mount.
 
 21. Every preview rejection prevents import, including custom-format rejection,
     unresolved TheXEM mapping, and "Unable to determine if file is a sample".
-    A `permanent` rejection type is not proof that deletion is safe. The service
-    reports operator intervention for mapping, access, media inspection, or
-    ambiguous-match problems instead of forcing an import.
+    Sonarr's current rejection, whether temporary or permanent, authorizes
+    cleanup after the rejected-time wait. The service does not force an import.
 
 22. A competing queued, downloading, paused, importing, or pending-import
     download for an affected episode defers intervention. Completed alternatives
@@ -149,7 +155,9 @@ exposes no web server or network port and requires no media-directory mount.
 23. Recovery makes at most three import request attempts per unchanged candidate
     by default, with at least 15 minutes between known failed attempts. A policy
     deferral consumes no attempt. A pending or uncertain attempt is not retried.
-    Exhaustion is visible and preserves the download; restart does not reset it.
+    Exhaustion is visible and prevents further imports; restart does not reset it.
+    It does not independently authorize cleanup, but a valid Sonarr rejection
+    can still qualify the download for rejected cleanup after its own wait.
     A materially changed candidate permits reevaluation without erasing history.
 
 24. A command acknowledgement alone is pending. Verified success requires
@@ -161,22 +169,38 @@ exposes no web server or network port and requires no media-directory mount.
 
 25. Recovery takes precedence over cleanup. Cleanup requires its own enabled
     setting, six-hour wait, fresh complete observation, current preview, scope,
-    and safety checks. Age, retry exhaustion, a generic error, or an empty
-    preview never independently authorize deletion.
+    and safety checks. Age, retry exhaustion, a local/API error, or an empty
+    preview never independently authorize deletion. A valid explicit Sonarr
+    preview rejection is sufficient judgment for rejected-download cleanup;
+    remediator does not require an independent quality or usability verdict.
 
 26. Redundancy cleanup requires that every intended episode has an acceptable
     existing library file and every remaining previewed candidate is equal or
     inferior under the current profile. Missing intended episodes, uncertain
-    pack membership, conflicting previews, and any unrelated rejection preserve
-    the entire download. Redundant releases are never blocklisted or searched
+    pack membership, conflicting previews, and any unrelated rejection prevent
+    redundancy classification; a valid rejection can instead qualify for
+    rejected-download cleanup. Redundant releases are never blocklisted or searched
     again by this service.
 
 27. Unusable-download cleanup is limited to complete, unambiguous
     previews where every remaining media file is positively identified by
-    Sonarr as a sample or as having no audio tracks. Indeterminate sample
-    detection, missing paths/files, unavailable previews, disk/access errors,
-    unmapped episodes, and unrecognized rejection wording remain manual work.
-    No potentially usable file or unresolved episode may share the download.
+    Sonarr as a sample or as having no audio tracks. Separately, rejected-download
+    cleanup trusts any valid explicit Sonarr rejection after six hours by
+    default, including indeterminate sample, disk/access, mapping and unknown
+    rejection wording. One rejected file qualifies the entire shared download,
+    including mixed packs; complete episode membership is not required. Empty,
+    malformed, conflicting-download or unavailable previews remain protected.
+    Configured client/series scope still applies; unknown series cannot establish
+    membership in a restricted series scope. Generic rejected cleanup does not
+    blocklist or search. It preserves existing library files and deletes the
+    downloaded job/data through the download client.
+
+    Rejected time accrues only between successful observations of rejection.
+    It survives restart, excludes downtime/read-failure gaps, and resets when
+    rejection clears, download identity changes, the download vanishes, or its
+    tracked state becomes protected. A changed rejection message alone does not
+    reset continuous blocking. Preexisting eligible age does not prefill this
+    timer. Explicit manual wait override may skip it for one request.
 
 28. Blocklisting may accompany verified unusable-download cleanup only when
     explicitly enabled. The actual removal request clearly identifies both

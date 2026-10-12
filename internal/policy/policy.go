@@ -47,6 +47,93 @@ func Eligible(rows []sonarr.QueueRow) bool {
 	}
 	return true
 }
+
+// RejectedCleanup trusts Sonarr's import verdict for removing the whole download.
+// Matching/profile proof is required for imports, not for this cleanup path.
+// The boolean records a scoped rejection even while cleanup is disabled.
+func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
+	d := Decision{Kind: "defer", Fingerprint: Fingerprint(o), EpisodeIDs: []int{}, SeriesIDs: []int{}}
+	if !Eligible(o.Rows) || len(o.Preview) == 0 {
+		return d, false
+	}
+	restricted := len(c.Scope.IncludeSeriesIDs) > 0 || len(c.Scope.ExcludeSeriesIDs) > 0
+	knownQueueSeries := false
+	addTarget := func(series, episode int) bool {
+		if series < 0 || episode < 0 {
+			return false
+		}
+		if series > 0 {
+			if !SeriesAllowed(c, series) {
+				return false
+			}
+			if !slices.Contains(d.SeriesIDs, series) {
+				d.SeriesIDs = append(d.SeriesIDs, series)
+			}
+		}
+		if episode > 0 && !slices.Contains(d.EpisodeIDs, episode) {
+			d.EpisodeIDs = append(d.EpisodeIDs, episode)
+		}
+		return true
+	}
+	for _, q := range o.Rows {
+		if q.DownloadID != o.DownloadID || !ClientAllowed(c, q.DownloadClient) {
+			return d, false
+		}
+		series, episode := 0, 0
+		if q.SeriesID != nil {
+			series = *q.SeriesID
+			knownQueueSeries = knownQueueSeries || series > 0
+		}
+		if q.EpisodeID != nil {
+			episode = *q.EpisodeID
+		}
+		if !addTarget(series, episode) {
+			return d, false
+		}
+	}
+	paths := map[string]bool{}
+	ids := map[int]bool{}
+	rejected := false
+	for _, f := range o.Preview {
+		if f.ID <= 0 || ids[f.ID] || strings.TrimSpace(f.Path) == "" || paths[f.Path] || f.DownloadID != o.DownloadID || f.Rejections == nil {
+			return d, false
+		}
+		paths[f.Path] = true
+		ids[f.ID] = true
+		series := 0
+		if f.Series != nil {
+			series = f.Series.ID
+		}
+		if restricted && series <= 0 && !knownQueueSeries || !addTarget(series, 0) {
+			return d, false
+		}
+		for _, ep := range f.Episodes {
+			if !addTarget(ep.SeriesID, ep.ID) {
+				return d, false
+			}
+		}
+		for _, r := range f.Rejections {
+			if strings.TrimSpace(r.Reason) == "" || r.Type != "temporary" && r.Type != "permanent" {
+				return d, false
+			}
+			rejected = true
+		}
+	}
+	if rejected {
+		slices.Sort(d.EpisodeIDs)
+		slices.Sort(d.SeriesIDs)
+		switch {
+		case !c.Cleanup.Enabled:
+			d.Reason = "Sonarr rejects import; cleanup disabled"
+		case Competing(o.Queue, o.DownloadID, d.EpisodeIDs):
+			d.Reason = "competing active or unidentified download"
+		default:
+			d.Kind, d.Reason = "remove_blocked", "Sonarr rejects import; remove the rejected shared download"
+		}
+	}
+	return d, rejected
+}
+
 func QueueIdentity(rows []sonarr.QueueRow) string {
 	type identity struct {
 		Download, Client, Path, Title string

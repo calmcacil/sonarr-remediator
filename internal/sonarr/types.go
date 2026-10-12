@@ -16,7 +16,7 @@ type QueueRow struct {
 }
 
 func (q QueueRow) Eligible() bool {
-	return q.DownloadID != "" && q.Status == "completed" && (q.TrackedState == "importBlocked" || q.TrackedState == "importFailed")
+	return q.DownloadID != "" && q.Status == "completed" && (q.TrackedState == "importBlocked" || q.TrackedState == "importFailed" || q.TrackedState == "importPending")
 }
 
 type NamedID struct {

@@ -6,6 +6,10 @@ separate operator action.
 Patch 0.2.1 extends the explicit wait override to episode cooldowns without
 requiring deployment configuration changes or a state migration.
 
+Release 0.3.0 includes completed import-pending downloads and generic
+Sonarr-rejected cleanup under the updated base contract. Existing manual waits
+and their explicit override apply; no new deployment configuration is required.
+
 ## Summary
 
 Operators can preview or request one immediate recovery/cleanup cycle without
@@ -74,23 +78,28 @@ continue to apply.
 
 10. A download on its first eligible observation can be considered with an
     explicit wait override. It must still be completed and tracked as
-    `importBlocked` or `importFailed`. Downloading, queued, paused,
-    `importPending`, `importing` and `imported` downloads remain protected.
+    `importBlocked`, `importFailed` or `importPending`. Downloading, queued,
+    paused, `importing` and `imported` downloads remain protected. An explicit
+    wait override can consider completed import-pending work on its first
+    observation, but cannot bypass preview rejections or other policy gates.
 
 11. Execution never enables a disabled recovery, cleanup, blocklist or
-    replacement-search permission. Scope, matching, complete episode membership,
-    profile rules, preview rejections and competing-download protections remain
-    in force. There is no force-import, force-delete or policy-override flag.
+    replacement-search permission. Scope, competing-download protections and
+    action locks remain in force. Import and strict cleanup retain matching,
+    complete episode membership and profile rules; generic Sonarr-rejected
+    cleanup uses Sonarr's rejection instead of those independent proofs.
+    There is no force-import or unrestricted force-delete flag.
 
 12. Wait override does not bypass known-failure retry spacing,
     recovery attempt exhaustion, mutation budgets, state/read failures, or
     pending, partial and uncertain outcomes. Blocked work is explained and kept.
 
-13. Recovery continues to take precedence over cleanup. Cleanup still requires
-    proven redundancy or the complete explicit Sample/No audio tracks verdicts
-    from the base contract. Unknown series, unresolved mapping/membership,
-    indeterminate sample detection, access errors and generic failures remain
-    operator work.
+13. Recovery continues to take precedence over cleanup. Cleanup accepts proven
+    redundancy, complete explicit Sample/No audio tracks verdicts, or a valid
+    explicit Sonarr import rejection under the base contract. Rejected-download
+    cleanup uses observed rejected time for its wait; a manual wait override can
+    skip it. Mapping, membership, sample-detection and access rejections can
+    qualify. Empty/unavailable/malformed previews and local/API failures cannot.
 
 14. Cleanup output explicitly states that removal uses the download client and
     can delete downloaded data. Blocklisting and replacement search choices are
@@ -130,7 +139,7 @@ continue to apply.
     rather than presenting both as an age delay.
 
 21. Results distinguish `would_import`, `would_remove_redundant`,
-    `would_remove_unusable`, `would_search`, `waiting`, `blocked`, `limited` and
+    `would_remove_unusable`, `would_remove_blocked`, `would_search`, `waiting`, `blocked`, `limited` and
     `not_present`. Execution additionally reports attempted actions and their
     acknowledged, pending, verified, failed, partial or uncertain outcomes.
     Machine output has a versioned schema; runtime logs use stderr.

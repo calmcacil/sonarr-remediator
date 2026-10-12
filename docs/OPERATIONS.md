@@ -13,6 +13,24 @@ Unknown settings and invalid values fail startup. Configure exactly one of
 set `dry_run: false`. Review `status` and startup logs for effective permissions.
 Enabling blocklisting or replacement search also requires `cleanup.enabled`.
 Cleanup has no queue-only mode; it requests removal from the download client.
+Completed `importPending` downloads are observed like `importBlocked` and
+`importFailed` downloads. Automatic recovery respects `recovery.wait` (15m by
+default), and cleanup respects `cleanup.wait` (6h by default). Waiting progress
+starts with this observer's successful scans, not Sonarr's queue-added timestamp;
+old pending downloads do not immediately become due after an image update.
+A valid Sonarr rejection starts a separate observed rejected-time clock. After
+`cleanup.wait`, that rejection authorizes removal of the shared download and
+downloaded data, including sample-detection failures, mapping and access blockers.
+Rejection clearing resets this clock; old eligible age does not prefill it.
+`show` and trigger reports expose the rejected progress. No independent upgrade
+or complete pack-membership proof is needed for generic rejected cleanup, and
+blocklisting/replacement search stay off for that path. Empty, malformed or
+unavailable previews, active `importing` work and unresolved actions remain protected.
+Version 0.3.0 broadens cleanup-enabled behavior: Sonarr-rejected jobs previously
+preserved for manual review now qualify for deletion after the rejected wait.
+Updating the image is sufficient; existing settings and schema-2 history remain
+valid. New rejected-time fields start at zero when absent from older state.
+Keep `cleanup.enabled: false` if automatic client-data deletion is unwanted.
 Scope uses positive series IDs and exact queue download-client names. Exclusions
 take precedence over allowlists. Empty allowlists permit all otherwise eligible
 work. Unknown series are checked after Sonarr matches them.
@@ -90,12 +108,14 @@ from the actions that fit this cycle's shared budgets.
 keeps its configured mode. `--dry-run=false` is rejected. An explicit
 `--override-wait` skips `recovery.wait`, `cleanup.wait` and, since version 0.2.1,
 `limits.episode_cooldown` for this request. This allows separate redundant downloads
-of the same episode to be removed in successive manual requests. It does not alter
-stored progress or bypass protected tracked states, permissions, complete episode
-membership, competition, retry spacing, attempt exhaustion, mutation budgets or
+of the same episode to be removed in successive manual requests, and can skip
+the rejected-download cleanup wait. It does not alter
+stored progress or bypass protected tracked states, permissions,
+competition, retry spacing, attempt exhaustion, mutation budgets or
 uncertain effects. Background work and manual requests without the flag still
 respect episode cooldowns. A fresh live evaluation can differ from an earlier
-preview.
+preview. Imports and strict cleanup still require complete episode membership;
+generic Sonarr-rejected cleanup follows the rejected-download contract instead.
 
 Repeated `--download-id` flags select exact Sonarr download IDs, deduplicated
 without changing the IDs. Queue-row IDs and titles are not selectors. Omitting

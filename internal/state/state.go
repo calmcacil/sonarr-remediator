@@ -41,22 +41,25 @@ type Status struct {
 	Unresolved        int            `json:"unresolved_outcomes"`
 }
 type Issue struct {
-	DownloadID    string            `json:"download_id"`
-	Identity      string            `json:"identity"`
-	Fingerprint   string            `json:"fingerprint"`
-	Title         string            `json:"title"`
-	Rows          []sonarr.QueueRow `json:"queue_rows"`
-	FirstSeen     time.Time         `json:"first_seen"`
-	EligibleSince time.Time         `json:"eligible_since,omitempty"`
-	LastSeen      time.Time         `json:"last_seen"`
-	Eligible      bool              `json:"eligible"`
-	Elapsed       time.Duration     `json:"eligible_elapsed_ns"`
-	RecoveryDue   time.Time         `json:"recovery_due,omitempty"`
-	CleanupDue    time.Time         `json:"cleanup_due,omitempty"`
-	State         string            `json:"state"`
-	Reason        string            `json:"reason"`
-	Decision      policy.Decision   `json:"decision"`
-	ResolvedAt    time.Time         `json:"resolved_at,omitempty"`
+	DownloadID       string            `json:"download_id"`
+	Identity         string            `json:"identity"`
+	Fingerprint      string            `json:"fingerprint"`
+	Title            string            `json:"title"`
+	Rows             []sonarr.QueueRow `json:"queue_rows"`
+	FirstSeen        time.Time         `json:"first_seen"`
+	EligibleSince    time.Time         `json:"eligible_since,omitempty"`
+	LastSeen         time.Time         `json:"last_seen"`
+	Eligible         bool              `json:"eligible"`
+	Elapsed          time.Duration     `json:"eligible_elapsed_ns"`
+	Rejected         bool              `json:"sonarr_rejected,omitempty"`
+	RejectedElapsed  time.Duration     `json:"rejected_elapsed_ns,omitempty"`
+	RejectedLastSeen time.Time         `json:"rejected_last_seen,omitempty"`
+	RecoveryDue      time.Time         `json:"recovery_due,omitempty"`
+	CleanupDue       time.Time         `json:"cleanup_due,omitempty"`
+	State            string            `json:"state"`
+	Reason           string            `json:"reason"`
+	Decision         policy.Decision   `json:"decision"`
+	ResolvedAt       time.Time         `json:"resolved_at,omitempty"`
 }
 type Attempt struct {
 	Source            string          `json:"source,omitempty"`
