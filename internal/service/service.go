@@ -93,6 +93,9 @@ func group(queue []sonarr.QueueRow) map[string][]sonarr.QueueRow {
 func (s *Service) failed(now time.Time, e error) error {
 	s.expirePending(now)
 	s.previous = time.Time{}
+	for _, issue := range s.Store.Data.Issues {
+		issue.RejectedLastSeen = time.Time{}
+	}
 	st := &s.Store.Data.Status
 	st.ReadFailure = e.Error()
 	st.Connectivity = "degraded"
@@ -173,6 +176,9 @@ func (s *Service) Cycle(parent context.Context) error {
 		i := data.Issues[id]
 		identity := policy.QueueIdentity(rows)
 		eligible := policy.Eligible(rows)
+		o, observed := observations[id]
+		_, rejected := policy.RejectedCleanup(s.Config, o)
+		rejected = observed && rejected
 		if i == nil {
 			if !eligible {
 				continue
@@ -183,6 +189,8 @@ func (s *Service) Cycle(parent context.Context) error {
 		if identity != i.Identity || !eligible || !i.Eligible || i.State == "resolved" {
 			i.EligibleSince = now
 			i.Elapsed = 0
+			i.Rejected, i.RejectedElapsed = false, 0
+			i.RejectedLastSeen = time.Time{}
 			i.RecoveryDue = time.Time{}
 			i.CleanupDue = time.Time{}
 		}
@@ -196,12 +204,25 @@ func (s *Service) Cycle(parent context.Context) error {
 			}
 			i.Elapsed += delta
 		}
+		// Selected manual cycles must not consume another download's rejected wait.
+		if rejected && i.Rejected && !s.previous.IsZero() && now.After(i.RejectedLastSeen) && now.Sub(i.RejectedLastSeen) <= 2*s.Config.PollInterval {
+			i.RejectedElapsed += min(s.Config.PollInterval, now.Sub(i.RejectedLastSeen))
+		}
+		if observed {
+			if !rejected {
+				i.RejectedElapsed = 0
+				i.RejectedLastSeen = time.Time{}
+			} else {
+				i.RejectedLastSeen = now
+			}
+			i.Rejected = rejected
+		}
 		if i.Elapsed < s.Config.Recovery.Wait {
 			i.RecoveryDue = time.Time{}
 		} else if i.RecoveryDue.IsZero() {
 			i.RecoveryDue = now
 		}
-		if i.Elapsed < s.Config.Cleanup.Wait {
+		if cleanupElapsed(i) < s.Config.Cleanup.Wait {
 			i.CleanupDue = time.Time{}
 		} else if i.CleanupDue.IsZero() {
 			i.CleanupDue = now
@@ -220,6 +241,8 @@ func (s *Service) Cycle(parent context.Context) error {
 		if _, ok := groups[id]; !ok && i.State != "resolved" && !s.hasPending(id) {
 			i.Eligible = false
 			i.Elapsed = 0
+			i.Rejected, i.RejectedElapsed = false, 0
+			i.RejectedLastSeen = time.Time{}
 			i.ResolvedAt = now
 			s.setIssue(i, "resolved", "externally resolved; complete queue scan shows absence")
 		}
@@ -245,11 +268,11 @@ func (s *Service) Cycle(parent context.Context) error {
 	candidates := data.SortedIssues(false)
 	dueAt := func(i *state.Issue) time.Time {
 		if o, ok := observations[i.DownloadID]; ok {
-			d := policy.Evaluate(s.Config, o)
+			d := s.decision(o)
 			if d.Kind == "import" {
 				return i.RecoveryDue
 			}
-			if d.Kind == "remove_redundant" || d.Kind == "remove_unusable" {
+			if d.Kind == "remove_redundant" || d.Kind == "remove_unusable" || d.Kind == "remove_blocked" {
 				return i.CleanupDue
 			}
 		}
@@ -279,7 +302,7 @@ func (s *Service) Cycle(parent context.Context) error {
 		o, ok := observations[i.DownloadID]
 		var d policy.Decision
 		if ok {
-			d = policy.Evaluate(s.Config, o)
+			d = s.decision(o)
 			s.describe(i, o, d)
 		}
 		if s.hasPending(i.DownloadID) {
@@ -307,8 +330,12 @@ func (s *Service) Cycle(parent context.Context) error {
 		if d.Kind != "import" {
 			wait = s.Config.Cleanup.Wait
 		}
-		if i.Elapsed < wait && !(s.request != nil && s.request.OverrideWait) {
-			s.setIssue(i, "waiting", fmt.Sprintf("%s; observed eligibility %s of %s", d.Reason, i.Elapsed, wait))
+		elapsed := i.Elapsed
+		if d.Kind != "import" {
+			elapsed = cleanupElapsed(i)
+		}
+		if elapsed < wait && !(s.request != nil && s.request.OverrideWait) {
+			s.setIssue(i, "waiting", fmt.Sprintf("%s; observed eligibility %s of %s", d.Reason, elapsed, wait))
 			s.itemBlocked(i.DownloadID, "waiting", i.Reason)
 			continue
 		}
@@ -409,6 +436,23 @@ func sortedOperations(m map[string]*state.Operation) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func cleanupElapsed(i *state.Issue) time.Duration {
+	if i.Rejected {
+		return i.RejectedElapsed
+	}
+	return i.Elapsed
+}
+
+func (s *Service) decision(o policy.Observation) policy.Decision {
+	d := policy.Evaluate(s.Config, o)
+	if d.Kind == "defer" {
+		if rejected, present := policy.RejectedCleanup(s.Config, o); present {
+			return rejected
+		}
+	}
+	return d
 }
 func (s *Service) setIssue(i *state.Issue, status, reason string) {
 	if i.State != status || i.Reason != reason {
@@ -616,7 +660,7 @@ func (s *Service) execute(ctx context.Context, i *state.Issue, planned policy.De
 		s.Store.Data.Status.ReadFailure = e.Error()
 		return nil
 	}
-	d := policy.Evaluate(s.Config, o)
+	d := s.decision(o)
 	if d.Kind != planned.Kind || d.Fingerprint != planned.Fingerprint {
 		s.setIssue(i, "policy-blocked", "candidate or policy changed during fresh execution checks")
 		return nil

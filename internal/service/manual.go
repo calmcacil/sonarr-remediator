@@ -239,8 +239,12 @@ func (s *Service) describe(i *state.Issue, o policy.Observation, d policy.Decisi
 		item.Wait = s.Config.Cleanup.Wait
 	}
 	item.Observed, item.Remaining = i.Elapsed, max(0, item.Wait-i.Elapsed)
+	if d.Kind != "import" {
+		item.Observed = cleanupElapsed(i)
+		item.Remaining = max(0, item.Wait-item.Observed)
+	}
 	item.WaitBypassed = s.request.OverrideWait && item.Remaining > 0 && d.Kind != "defer"
-	item.ClientDeletion = d.Kind == "remove_redundant" || d.Kind == "remove_unusable"
+	item.ClientDeletion = d.Kind == "remove_redundant" || d.Kind == "remove_unusable" || d.Kind == "remove_blocked"
 	item.Blocklist = d.Blocklist
 	item.ReplacementSearch = d.Kind == "remove_unusable" && s.Config.Cleanup.ReplacementSearch
 }

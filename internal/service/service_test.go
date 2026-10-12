@@ -26,6 +26,7 @@ type fake struct {
 	mu                                      sync.Mutex
 	row                                     sonarr.QueueRow
 	preview                                 sonarr.Preview
+	extraPreview                            []sonarr.Preview
 	episode                                 sonarr.Episode
 	file                                    sonarr.EpisodeFile
 	profile                                 sonarr.Profile
@@ -86,7 +87,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		result = map[string]any{"page": 1, "pageSize": 100, "totalRecords": len(rows), "records": rows}
 	case path == "manualimport":
-		result = []sonarr.Preview{f.preview}
+		result = append([]sonarr.Preview{f.preview}, f.extraPreview...)
 	case path == "episode/100":
 		result = f.episode
 	case path == "episodefile/200":
@@ -156,7 +157,14 @@ func due(t *testing.T, s *Service, now *time.Time) {
 	cycle(t, s, now, time.Minute)
 }
 func TestDryRunAndEligibilityGaps(t *testing.T) {
+	for _, tracked := range []string{"importBlocked", "importPending"} {
+		t.Run(tracked, func(t *testing.T) { testEligibilityGaps(t, tracked) })
+	}
+}
+func testEligibilityGaps(t *testing.T, tracked string) {
+	t.Helper()
 	s, f, now, path := setup(t, true)
+	f.row.TrackedState = tracked
 	due(t, s, now)
 	if len(f.mutations) != 0 || len(s.Store.Data.Attempts) != 1 || s.Store.Data.Attempts[0].Outcome != "recommended" {
 		t.Fatal("dry-run failed")
@@ -320,7 +328,7 @@ func TestFreshExecutionAndStateFailurePreventTransmission(t *testing.T) {
 	}
 	d := s.Store.Data.Issues[f.row.DownloadID].Decision
 	_ = o
-	f.row.TrackedState = "importPending"
+	f.row.TrackedState = "importing"
 	if e = s.execute(context.Background(), s.Store.Data.Issues[f.row.DownloadID], d, *now); e != nil {
 		t.Fatal(e)
 	}

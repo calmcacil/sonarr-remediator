@@ -28,7 +28,7 @@ and place the API key in `sonarr_api_key` inside that directory. Use the
 permissions. The service opens no inbound port.
 
 ```sh
-podman build -f Containerfile -t localhost/sonarr-remediator:0.2.1 .
+podman build -f Containerfile -t localhost/sonarr-remediator:0.3.0 .
 mkdir -m 700 state
 podman run -d --name sonarr-remediator \
   --userns=keep-id:uid=65532,gid=65532 \
@@ -36,7 +36,7 @@ podman run -d --name sonarr-remediator \
   --stop-timeout=30 --health-cmd='/sonarr-remediator healthcheck' \
   --health-start-period=3m \
   -v "$PWD/config:/config:ro" -v "$PWD/state:/state" \
-  localhost/sonarr-remediator:0.2.1 run --config /config/config.yaml
+  localhost/sonarr-remediator:0.3.0 run --config /config/config.yaml
 ```
 
 Attach the container to a private network where the configured Sonarr URL is
@@ -83,21 +83,31 @@ for timeout, exit codes, receipts and the schema-2 rollback boundary.
 
 ## Policy
 
-Recovery waits for 15 minutes of observed completed-and-blocked eligibility;
-cleanup waits six hours. Restarts and failed observation gaps do not advance
-these waits. Protected tracked states such as `importPending` are preserved.
+Completed `importBlocked`, `importFailed` and `importPending` downloads use the
+same policy: recovery waits for 15 minutes of observed eligibility, and cleanup
+waits six hours. Both waits are configurable. Restarts and failed observation
+gaps do not advance them. Pending downloads accumulate age instead of remaining
+protected indefinitely; active `importing` and `imported` states are preserved.
 Shared queue rows yield one decision per download.
 
 Existing files are replaced only for a strict improvement under the current
 Sonarr quality profile. Grouped qualities compare equally; cutoffs, minimum
 custom-format scores, and proper/repack preference apply. An accepted preview
 with equal quality and score does not authorize a replacement. Any rejected or
-ambiguous media file defers the whole pack.
+ambiguous media file defers import of the whole pack.
 
-Only exact `Sample` and `No audio tracks detected` verdicts can authorize unusable
-cleanup. An indeterminate sample, TheXEM mapping, access error, or empty preview
-requires operator intervention. Redundancy removal requires acceptable library
-files for every intended episode; it never blocklists or searches again.
+With cleanup enabled, a valid Sonarr import rejection that persists for
+`cleanup.wait` (six hours by default) authorizes deletion of the shared download
+and its downloaded data. This includes indeterminate samples, TheXEM mapping,
+access failures and unknown rejection wording; one rejected file can qualify a
+whole pack. The rejected-time clock resets when the blocker clears and excludes
+downtime or failed reads. Existing library files are preserved. Empty, malformed
+or unavailable previews do not authorize deletion.
+
+Generic rejected-download cleanup never blocklists or searches again. The
+separate explicit `Sample`/`No audio tracks detected` path can use those permissions
+when enabled and fully proven. Redundancy cleanup also remains available for
+equal/inferior candidates with acceptable library files for every intended episode.
 
 The default mutation limits are one per scan and five per rolling hour, shared
 by imports, removals, and searches. Intent and budget are committed before

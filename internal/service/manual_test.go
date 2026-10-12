@@ -255,7 +255,7 @@ func TestManualOverridePreservesSafetyGates(t *testing.T) {
 			case "permission":
 				s.Config.Recovery.Enabled = false
 			case "protected":
-				f.row.TrackedState = "importPending"
+				f.row.TrackedState = "importing"
 			case "retry":
 				s.Store.Data.Attempts = append(s.Store.Data.Attempts, a)
 			case "exhausted":

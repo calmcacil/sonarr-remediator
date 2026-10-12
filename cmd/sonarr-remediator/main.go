@@ -20,7 +20,7 @@ import (
 	"github.com/calmcacil/sonarr-remediator/internal/state"
 )
 
-var version = "0.2.1"
+var version = "0.3.0"
 
 func main() {
 	if e := execute(os.Args[1:], os.Stdout, os.Stderr); e != nil {
@@ -193,6 +193,9 @@ func execute(args []string, out, errOut io.Writer) error {
 		}
 	case *state.Issue:
 		fmt.Fprintf(out, "Download: %s\nState: %s\nEpisodes: %v\nObserved eligible: %s\nDecision: %s\nReason: %s\n", v.DownloadID, v.State, v.Decision.EpisodeIDs, v.Elapsed, v.Decision.Kind, v.Reason)
+		if v.Rejected {
+			fmt.Fprintf(out, "Observed Sonarr rejection: %s\n", v.RejectedElapsed)
+		}
 	case []state.Attempt:
 		for _, a := range v {
 			fmt.Fprintf(out, "%d  %s  %s  %s  %s  %s\n", a.ID, a.Started.Format(time.RFC3339), a.DownloadID, a.Kind, a.Outcome, a.Reason)
