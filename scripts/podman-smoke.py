@@ -91,8 +91,11 @@ def main():
             assert "smoke-secret-never-export" not in run("podman", "logs", app).stderr
             container = json.loads(run("podman", "inspect", app).stdout)[0]
             assert container["HostConfig"]["ReadonlyRootfs"]
+            assert container["Config"]["User"] == "65532:65532"
             assert not container["NetworkSettings"].get("Ports")
             assert {m["Destination"] for m in container["Mounts"]} == {"/config", "/state"}
+            mounts = {m["Destination"]: m for m in container["Mounts"]}
+            assert not mounts["/config"]["RW"] and mounts["/state"]["RW"]
             assert run("podman", "exec", app, "/sonarr-remediator", "show", "unknown", check=False).returncode != 0
             checks += ["non-root", "private-state", "readonly-root-config", "no-ports-media-socket",
                        "dry-run-zero-mutations", "local-queries", "health", "recommendation-deduplication"]

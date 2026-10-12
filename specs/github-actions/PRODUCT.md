@@ -184,3 +184,6 @@ defined by [the service spec](../sonarr-remediator/PRODUCT.md).
   before merge and explicit release publication to public GHCR.
 - Immutable version/component tags and stable `latest`, with no downgrade or
   prerelease promotion of `latest`.
+- Renovate maintains the mise tool/runtime pins, shared Go/module/container
+  toolchain, image digests, and full action SHAs through ordinary CI-gated PRs.
+  Automerge is disabled; there is no scheduled duplicate CI workflow.

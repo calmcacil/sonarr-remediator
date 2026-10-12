@@ -3,21 +3,42 @@ go = "1.27.2"
 python = "3.14.8"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
 "aqua:rhysd/actionlint" = "1.7.11"
+gh = "2.102.0"
+
+[env]
+GOTOOLCHAIN = "local"
 
 [tasks.check]
 description = "Check formatting, correctness, OCI evidence, CI syntax, and reachable vulnerabilities"
+depends = ["renovate:check"]
 run = """
-export GOTOOLCHAIN=local
-test "$(go env GOVERSION)" = "go1.27.2"
-test -z "$(gofmt -l cmd internal)"
-go vet ./...
-go test -race ./...
-python scripts/test_oci_evidence.py
-actionlint .github/workflows/ci.yml
-for architecture in amd64 arm64; do
-  GOOS=linux GOARCH="$architecture" govulncheck ./...
-done
+bash scripts/go-checks.sh
+actionlint .github/workflows/*.yml
 """
+
+[tasks."ci:test"]
+description = "Check CI evidence, release rejection paths, repository policy, and toolchain consistency"
+run = "python -m unittest discover -s scripts -p 'test_*.py'"
+
+[tasks."renovate:check"]
+description = "Validate dependency automation with the official Renovate validator"
+run = "bash scripts/renovate-check.sh"
+
+[tasks."ci:podman"]
+description = "Build and exercise the native rootless image (SRA_ARCHITECTURE and SRA_REVISION required)"
+run = "bash scripts/podman-ci.sh"
+
+[tasks."repo:inspect"]
+description = "Read back repository and Actions policy without changing it"
+run = "python scripts/repository-policy.py inspect"
+
+[tasks."repo:plan"]
+description = "Show the exact repository and Actions settings to apply"
+run = "python scripts/repository-policy.py plan"
+
+[tasks."repo:apply"]
+description = "Apply the reviewed repository and Actions policy, then verify it"
+run = "python scripts/repository-policy.py apply"
 
 [tasks.test]
 description = "Run the Go regression and integration suite with race detection"
