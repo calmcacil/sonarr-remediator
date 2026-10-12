@@ -231,6 +231,7 @@ def rootless():
 def auth_file(directory):
     path = pathlib.Path(directory) / "auth.json"
     path.touch(mode=0o600)
+    path.write_text('{"auths": {}}\n')
     command("podman", "--cgroup-manager=cgroupfs", "--events-backend=file", "login", "--authfile", str(path),
             "--username", os.environ["GITHUB_ACTOR"], "--password-stdin", "ghcr.io",
             input=os.environ["GH_TOKEN"])
