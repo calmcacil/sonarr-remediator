@@ -116,6 +116,7 @@ func (s *Service) Manual(ctx context.Context, req control.Request) control.Repor
 	}
 	if req.Execute {
 		s.previous = worker.previous
+		s.summary = worker.summary
 	}
 	uncertain := false
 	for _, item := range report.Items {

@@ -28,6 +28,7 @@ type Service struct {
 	report    *control.Report
 	requests  chan manualCall
 	admission chan struct{}
+	summary   summaryState
 }
 
 func New(c config.Config, client *sonarr.Client, store *state.Store, log *slog.Logger) *Service {
@@ -123,6 +124,18 @@ func (s *Service) expirePending(now time.Time) {
 	}
 }
 func (s *Service) Cycle(parent context.Context) error {
+	outcomes := map[int64]string{}
+	if s.request == nil || s.request.Execute {
+		for _, attempt := range s.Store.Data.Attempts {
+			if !attempt.DryRun {
+				outcomes[attempt.ID] = attempt.Outcome
+			}
+		}
+		defer func() {
+			s.collectSummaryOutcomes(outcomes)
+			s.logSummary()
+		}()
+	}
 	ctx, cancel := context.WithTimeout(parent, 50*time.Second)
 	defer cancel()
 	now := s.Now()
@@ -422,6 +435,8 @@ func (s *Service) Cycle(parent context.Context) error {
 			}
 		}
 	}
+	// Capture transitions before retention can remove completed attempts.
+	s.collectSummaryOutcomes(outcomes)
 	data.Prune(now, s.Config.HistoryRetention, s.Config.Limits.EpisodeCooldown)
 	data.UpdateStatus(now)
 	if s.request != nil && data.Status.ReadFailure != "" {
@@ -463,7 +478,7 @@ func (s *Service) decision(o policy.Observation) policy.Decision {
 }
 func (s *Service) setIssue(i *state.Issue, status, reason string) {
 	if i.State != status || i.Reason != reason {
-		s.Log.Info("issue decision", "download_id", i.DownloadID, "episodes", i.Decision.EpisodeIDs, "state", status, "reason", reason)
+		s.Log.Debug("issue decision", "download_id", i.DownloadID, "episodes", i.Decision.EpisodeIDs, "state", status, "reason", reason)
 	}
 	i.State = status
 	i.Reason = reason
@@ -622,6 +637,7 @@ func (s *Service) recommend(i *state.Issue, d policy.Decision, now time.Time) {
 		}
 	}
 	s.Store.Data.Attempts = append(s.Store.Data.Attempts, state.Attempt{ID: s.nextID(), DownloadID: i.DownloadID, Fingerprint: d.Fingerprint, Kind: d.Kind, Reason: d.Reason, DryRun: true, Started: now, Finished: now, Outcome: "recommended", Decision: d})
+	s.summary.recommendations++
 }
 func (s *Service) nextID() int64 {
 	var n int64
@@ -705,7 +721,7 @@ func (s *Service) execute(ctx context.Context, i *state.Issue, planned policy.De
 		}
 		s.response(a, e)
 	}
-	s.Log.Info("mutation attempted", "download_id", a.DownloadID, "episodes", d.EpisodeIDs, "action", d.Kind, "blocklist", d.Blocklist, "outcome", a.Outcome)
+	s.logMutation(a)
 	return s.Store.Save()
 }
 func (s *Service) response(a *state.Attempt, e error) {
