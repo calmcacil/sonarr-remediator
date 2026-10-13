@@ -9,9 +9,174 @@ import (
 	"testing"
 	"time"
 
+	"github.com/calmcacil/sonarr-remediator/internal/policy"
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 	"github.com/calmcacil/sonarr-remediator/internal/state"
 )
+
+const episodeMismatchVerdict = "Episode 1x01 was unexpected considering the Example.1x12 folder name"
+
+func TestEpisodeMismatchCleanupFirstObservation(t *testing.T) {
+	for _, tracked := range []string{"importBlocked", "importFailed", "importPending"} {
+		t.Run(tracked, func(t *testing.T) {
+			s, f, now, _ := setup(t, false)
+			s.Config.Cleanup.Enabled = true
+			s.Config.Cleanup.Wait = 6 * time.Hour
+			s.Config.Cleanup.Blocklist, s.Config.Cleanup.ReplacementSearch = true, true
+			f.row.TrackedState = tracked
+			f.preview.Rejections = []sonarr.Rejection{{Reason: episodeMismatchVerdict, Type: "permanent"}}
+			f.episode.HasFile, f.episode.EpisodeFileID = pointer(true), pointer(200)
+			f.file = sonarr.EpisodeFile{ID: 200, SeriesID: 10, Path: "/library/episode.mkv", Quality: f.preview.Quality, Score: pointer(0), Formats: []sonarr.NamedID{}}
+			before := f.file
+			cycle(t, s, now, 0)
+			if len(f.mutations) != 1 || f.mutations[0] != "DELETE queue/1" || f.deleteQuery != "blocklist=false&changeCategory=false&removeFromClient=true&skipRedownload=true" {
+				t.Fatalf("mismatch not removed on first observation: mutations=%v flags=%s", f.mutations, f.deleteQuery)
+			}
+			if i := s.Store.Data.Issues[f.row.DownloadID]; i.RejectedElapsed != 0 || i.CleanupDue.IsZero() {
+				t.Fatal("immediate cleanup fabricated age or failed to become due")
+			}
+			cycle(t, s, now, time.Minute)
+			a := s.Store.Data.Attempts[0]
+			if a.Kind != "remove_blocked" || a.Outcome != "verified" || !a.RemovalVerified || a.Decision.Blocklist || len(s.Store.Data.Operations) != 0 || len(f.mutations) != 1 || f.file.Path != before.Path || f.file.ID != before.ID || *f.episode.EpisodeFileID != before.ID {
+				t.Fatal("mismatch cleanup lost verification/library protection or added effects")
+			}
+		})
+	}
+}
+
+func TestManualEpisodeMismatchWithoutWaitOverride(t *testing.T) {
+	s, f, _, _ := setup(t, true)
+	s.Config.Cleanup.Enabled = true
+	f.preview.Rejections = []sonarr.Rejection{{Reason: episodeMismatchVerdict, Type: "permanent"}}
+	r := s.Manual(context.Background(), request(t, false, false, f.row.DownloadID))
+	if r.ExitCode != 0 || len(r.Items) != 1 || r.Items[0].Disposition != "would_remove_blocked" || r.Items[0].Wait != 0 || r.Items[0].Remaining != 0 || r.Items[0].WaitBypassed || !r.Items[0].ClientDeletion || len(f.mutations) != 0 || len(s.Store.Data.Issues) != 0 || len(s.Store.Data.Attempts) != 0 {
+		t.Fatalf("mismatch preview did not report zero-wait isolated cleanup: %+v", r)
+	}
+	r = s.Manual(context.Background(), request(t, true, false, f.row.DownloadID))
+	if r.ExitCode != 0 || len(f.mutations) != 1 || s.Store.Data.Attempts[0].WaitOverride || !s.Config.DryRun {
+		t.Fatalf("mismatch execution required an override or changed background mode: %+v", r)
+	}
+}
+
+func TestEpisodeMismatchCleanupGuards(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*Service, *fake, time.Time)
+	}{
+		{"cleanup disabled", func(s *Service, f *fake, now time.Time) { s.Config.Cleanup.Enabled = false }},
+		{"importing", func(s *Service, f *fake, now time.Time) { f.row.TrackedState = "importing" }},
+		{"excluded series", func(s *Service, f *fake, now time.Time) { s.Config.Scope.ExcludeSeriesIDs = []int{10} }},
+		{"excluded client", func(s *Service, f *fake, now time.Time) { s.Config.Scope.ExcludeDownloadClients = []string{"client"} }},
+		{"temporary verdict", func(s *Service, f *fake, now time.Time) { f.preview.Rejections[0].Type = "temporary" }},
+		{"unknown wording", func(s *Service, f *fake, now time.Time) { f.preview.Rejections[0].Reason = "Episode mismatch" }},
+		{"failed required read", func(s *Service, f *fake, now time.Time) { f.readFail = true }},
+		{"invalid shared preview", func(s *Service, f *fake, now time.Time) {
+			f.extraPreview = []sonarr.Preview{{ID: 2, Path: "/downloads/other.mkv", DownloadID: "wrong", Rejections: []sonarr.Rejection{}}}
+		}},
+		{"hour budget", func(s *Service, f *fake, now time.Time) {
+			s.Config.Limits.MutationsPerHour = 1
+			s.Store.Data.Attempts = []state.Attempt{{ID: 1, DownloadID: "other", Kind: "remove_blocked", Started: now, Finished: now, Outcome: "verified"}}
+		}},
+		{"episode cooldown", func(s *Service, f *fake, now time.Time) {
+			s.Store.Data.Attempts = []state.Attempt{{ID: 1, DownloadID: "other", Kind: "import", Started: now, Finished: now, Outcome: "verified", Decision: policy.Decision{EpisodeIDs: []int{100}}}}
+		}},
+		{"uncertain prior action", func(s *Service, f *fake, now time.Time) {
+			s.Store.Data.Attempts = []state.Attempt{{ID: 1, DownloadID: f.row.DownloadID, Kind: "remove_blocked", Started: now, Outcome: "uncertain"}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, now, _ := setup(t, false)
+			s.Config.Cleanup.Enabled = true
+			f.preview.Rejections = []sonarr.Rejection{{Reason: episodeMismatchVerdict, Type: "permanent"}}
+			tc.edit(s, f, *now)
+			cycle(t, s, now, 0)
+			if len(f.mutations) != 0 {
+				t.Fatalf("mismatch bypassed %s: %v", tc.name, f.mutations)
+			}
+		})
+	}
+}
+
+func TestEpisodeMismatchMixedPackAndCompetition(t *testing.T) {
+	s, f, now, _ := setup(t, false)
+	s.Config.Cleanup.Enabled = true
+	f.preview.Rejections = []sonarr.Rejection{{Reason: episodeMismatchVerdict, Type: "permanent"}}
+	f.extraPreview = []sonarr.Preview{{ID: 2, Path: "/downloads/release/other.mkv", DownloadID: f.row.DownloadID, Rejections: []sonarr.Rejection{}}}
+	cycle(t, s, now, 0)
+	if len(f.mutations) != 1 {
+		t.Fatal("mixed pack mismatch required independent membership or a wait")
+	}
+
+	s, f, now, _ = setup(t, false)
+	s.Config.Cleanup.Enabled = true
+	f.preview.Rejections = []sonarr.Rejection{{Reason: episodeMismatchVerdict, Type: "permanent"}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v3/queue" {
+			other := f.row
+			other.ID, other.DownloadID, other.Status, other.TrackedState = 2, "competing", "downloading", "downloading"
+			json.NewEncoder(w).Encode(map[string]any{"page": 1, "pageSize": 100, "totalRecords": 2, "records": []sonarr.QueueRow{f.row, other}})
+			return
+		}
+		f.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	s.Client, _ = sonarr.New(server.URL, "secret", time.Second, false)
+	cycle(t, s, now, 0)
+	if len(f.mutations) != 0 || s.Store.Data.Issues[f.row.DownloadID].State != "policy-blocked" {
+		t.Fatal("mismatch cleanup bypassed competing download protection")
+	}
+}
+
+func TestEpisodeMismatchFreshRejectionCheck(t *testing.T) {
+	for _, reason := range []string{"", "Unable to determine if file is a sample"} {
+		t.Run(reason, func(t *testing.T) {
+			s, f, now, _ := setup(t, true)
+			s.Config.Cleanup.Enabled = true
+			f.preview.Rejections = []sonarr.Rejection{{Reason: episodeMismatchVerdict, Type: "permanent"}}
+			cycle(t, s, now, 0)
+			i := s.Store.Data.Issues[f.row.DownloadID]
+			if len(s.Store.Data.Attempts) != 1 || s.Store.Data.Attempts[0].Outcome != "recommended" {
+				t.Fatal("background dry-run did not recommend immediate mismatch cleanup")
+			}
+			planned := i.Decision
+			f.preview.Rejections = []sonarr.Rejection{}
+			if reason != "" {
+				f.preview.Rejections = []sonarr.Rejection{{Reason: reason, Type: "permanent"}}
+			}
+			s.Client = s.Client.ForCycle(false)
+			if err := s.execute(context.Background(), i, planned, *now); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.mutations) != 0 || len(s.Store.Data.Attempts) != 1 {
+				t.Fatal("fresh execution deleted after mismatch cleared or became a different blocker")
+			}
+		})
+	}
+}
+
+func TestEpisodeMismatchUncertaintySurvivesRestart(t *testing.T) {
+	s, f, now, path := setup(t, false)
+	s.Config.Cleanup.Enabled = true
+	f.preview.Rejections = []sonarr.Rejection{{Reason: episodeMismatchVerdict, Type: "permanent"}}
+	f.ambiguous = true
+	cycle(t, s, now, 0)
+	if len(f.mutations) != 1 || s.Store.Data.Attempts[0].Outcome != "uncertain" {
+		t.Fatal("ambiguous mismatch removal was not recorded")
+	}
+	s.Store.Close()
+	store, err := state.Open(path, s.Config.Identity(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Store = store
+	t.Cleanup(store.Close)
+	s.previous = time.Time{}
+	cycle(t, s, now, time.Minute)
+	r := s.Manual(context.Background(), request(t, true, true, f.row.DownloadID))
+	if len(f.mutations) != 1 || s.Store.Data.Attempts[0].Outcome != "uncertain" || !s.Store.Data.Attempts[0].Decision.EpisodeMismatch || s.Store.Data.Budget(*now) != 1 || r.ExitCode == 0 {
+		t.Fatal("restart lost mismatch evidence/budget or replayed uncertain removal")
+	}
+}
 
 func TestNewRejectionDoesNotInheritOldQueueAge(t *testing.T) {
 	s, f, now, _ := setup(t, false)

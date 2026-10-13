@@ -195,6 +195,50 @@ def main():
             assert query("show", "second-download")["state"] == "resolved"
             assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "2"
             assert run("podman", "exec", fake, "/fake-sonarr", "library-id").stdout.strip() == "200"
+            run("podman", "stop", "--time", "30", app)
+            run("podman", "rm", app)
+            configuration.write_text(configuration.read_text().replace(
+                "cleanup:\n  enabled: true\n  wait: 2s\n",
+                "cleanup:\n  enabled: true\n  wait: 6h\n"
+            ).replace("dry_run: false", "dry_run: true"))
+            run("podman", "exec", fake, "/fake-sonarr", "mismatch-download")
+            start()
+            ready()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                result = run("podman", "exec", app, "/sonarr-remediator", "trigger",
+                             "--dry-run", "--download-id", "mismatched-download", "--json", check=False)
+                mismatch = json.loads(result.stdout)
+                if result.returncode == 0:
+                    break
+                time.sleep(0.2)
+            else:
+                raise AssertionError("episode mismatch preview stayed behind cleanup wait or cooldown")
+            item = mismatch["items"][0]
+            assert item["disposition"] == "would_remove_blocked" and item["configured_wait_ns"] == 0
+            assert item["remaining_wait_ns"] == 0 and not item["wait_bypassed"]
+            assert item["client_deletion_can_delete_data"] and not item["blocklist"] and not item["replacement_search"]
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "2"
+            run("podman", "stop", "--time", "30", app)
+            run("podman", "rm", app)
+            configuration.write_text(configuration.read_text().replace("dry_run: true", "dry_run: false"))
+            start()
+            ready()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                cleanup = query("actions", "--download-id", "mismatched-download")
+                if cleanup and cleanup[0]["outcome"] == "verified":
+                    break
+                time.sleep(0.2)
+            else:
+                raise AssertionError("episode mismatch did not clean up automatically with a six-hour wait configured")
+            assert cleanup[0]["kind"] == "remove_blocked" and cleanup[0]["removal_verified"]
+            assert cleanup[0]["decision"]["episode_mismatch"] and not cleanup[0]["decision"]["blocklist"]
+            assert not cleanup[0].get("wait_override", False) and not cleanup[0]["dry_run"]
+            assert query("show", "mismatched-download")["state"] == "resolved"
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "3"
+            assert run("podman", "exec", fake, "/fake-sonarr", "library-id").stdout.strip() == "200"
+            checks += ["episode-mismatch-cleanup"]
             # A config error and unreadable state must fail before observation/action.
             invalid = run("podman", "run", "--rm", "--network", network, "--read-only",
                           "--cap-drop=all", "--security-opt=no-new-privileges", args.image,

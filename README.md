@@ -28,7 +28,7 @@ and place the API key in `sonarr_api_key` inside that directory. Use the
 permissions. The service opens no inbound port.
 
 ```sh
-podman build -f Containerfile -t localhost/sonarr-remediator:0.3.0 .
+podman build -f Containerfile -t localhost/sonarr-remediator:0.4.0 .
 mkdir -m 700 state
 podman run -d --name sonarr-remediator \
   --userns=keep-id:uid=65532,gid=65532 \
@@ -36,7 +36,7 @@ podman run -d --name sonarr-remediator \
   --stop-timeout=30 --health-cmd='/sonarr-remediator healthcheck' \
   --health-start-period=3m \
   -v "$PWD/config:/config:ro" -v "$PWD/state:/state" \
-  localhost/sonarr-remediator:0.3.0 run --config /config/config.yaml
+  localhost/sonarr-remediator:0.4.0 run --config /config/config.yaml
 ```
 
 Attach the container to a private network where the configured Sonarr URL is
@@ -85,7 +85,8 @@ for timeout, exit codes, receipts and the schema-2 rollback boundary.
 
 Completed `importBlocked`, `importFailed` and `importPending` downloads use the
 same policy: recovery waits for 15 minutes of observed eligibility, and cleanup
-waits six hours. Both waits are configurable. Restarts and failed observation
+waits six hours except for the permanent episode mismatches described below.
+Both waits are configurable. Restarts and failed observation
 gaps do not advance them. Pending downloads accumulate age instead of remaining
 protected indefinitely; active `importing` and `imported` states are preserved.
 Shared queue rows yield one decision per download.
@@ -103,6 +104,14 @@ access failures and unknown rejection wording; one rejected file can qualify a
 whole pack. The rejected-time clock resets when the blocker clears and excludes
 downtime or failed reads. Existing library files are preserved. Empty, malformed
 or unavailable previews do not authorize deletion.
+
+Sonarr's explicit permanent rejection that an episode was unexpected for the
+folder name identifies a failed download. With cleanup enabled, this specific
+episode mismatch removes the shared download from the queue and download client
+on its first eligible scan, without the six-hour wait. This can delete a whole
+pack's downloaded data. Other rejection wording and temporary rejections keep
+the configured wait. Scope, competition, cooldowns, mutation limits and uncertain
+action protection still apply; reports show the mismatch and a zero wait.
 
 Generic rejected-download cleanup never blocklists or searches again. The
 separate explicit `Sample`/`No audio tracks detected` path can use those permissions

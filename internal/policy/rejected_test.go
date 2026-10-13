@@ -7,6 +7,35 @@ import (
 	"github.com/calmcacil/sonarr-remediator/internal/sonarr"
 )
 
+func TestEpisodeMismatchVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason, verdictType string
+		immediate                 bool
+	}{
+		{"single", "Episode 1x01 was unexpected considering the Example.1x12 folder name", "permanent", true},
+		{"multiple", "Episodes 1x01, 2x102 were unexpected considering the Example.Pack folder name", "permanent", true},
+		{"temporary", "Episode 1x01 was unexpected considering the Example.1x12 folder name", "temporary", false},
+		{"other mismatch", "Episode did not match the expected episode", "permanent", false},
+		{"prefixed", "Probe error: Episode 1x01 was unexpected considering the Example folder name", "permanent", false},
+		{"truncated", "Episode 1x01 was unexpected considering the Example", "permanent", false},
+		{"empty folder", "Episode 1x01 was unexpected considering the  folder name", "permanent", false},
+		{"invalid episode", "Episode unknown was unexpected considering the Example folder name", "permanent", false},
+		{"wrong plural", "Episodes 1x01 were unexpected considering the Example folder name", "permanent", false},
+		{"trailing text", "Episode 1x01 was unexpected considering the Example folder name; retry", "permanent", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := captured(t)["download-002"]
+			o.Preview[0].Rejections = []sonarr.Rejection{{Reason: tc.reason, Type: tc.verdictType}}
+			c := config.Defaults()
+			c.Cleanup.Enabled = true
+			d, rejected := RejectedCleanup(c, o)
+			if !rejected || d.Kind != "remove_blocked" || d.EpisodeMismatch != tc.immediate || d.Blocklist {
+				t.Fatalf("unexpected mismatch cleanup: %+v, rejected=%t", d, rejected)
+			}
+		})
+	}
+}
+
 func TestSonarrRejectionCleanupAuthority(t *testing.T) {
 	for _, tc := range []struct {
 		name string

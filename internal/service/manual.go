@@ -236,7 +236,7 @@ func (s *Service) describe(i *state.Issue, o policy.Observation, d policy.Decisi
 	item.Action, item.Episodes, item.PreviewFiles, item.MembershipComplete = d.Kind, d.EpisodeIDs, len(o.Preview), o.MembershipComplete
 	item.Wait = s.Config.Recovery.Wait
 	if d.Kind != "import" {
-		item.Wait = s.Config.Cleanup.Wait
+		item.Wait = s.cleanupWait(d)
 	}
 	item.Observed, item.Remaining = i.Elapsed, max(0, item.Wait-i.Elapsed)
 	if d.Kind != "import" {

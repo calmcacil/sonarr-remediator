@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -27,14 +28,18 @@ type Observation struct {
 	MembershipComplete bool
 }
 type Decision struct {
-	Kind        string              `json:"kind"`
-	Reason      string              `json:"reason"`
-	Fingerprint string              `json:"fingerprint"`
-	EpisodeIDs  []int               `json:"episode_ids"`
-	SeriesIDs   []int               `json:"series_ids"`
-	Files       []sonarr.ImportFile `json:"files,omitempty"`
-	Blocklist   bool                `json:"blocklist"`
+	Kind            string              `json:"kind"`
+	Reason          string              `json:"reason"`
+	Fingerprint     string              `json:"fingerprint"`
+	EpisodeIDs      []int               `json:"episode_ids"`
+	SeriesIDs       []int               `json:"series_ids"`
+	Files           []sonarr.ImportFile `json:"files,omitempty"`
+	Blocklist       bool                `json:"blocklist"`
+	EpisodeMismatch bool                `json:"episode_mismatch,omitempty"`
 }
+
+// Match Sonarr's verdict, not inferred episode differences or queue warnings.
+var unexpectedEpisodeRejection = regexp.MustCompile(`^(?:Episode [0-9]+x[0-9]{2,} was|Episodes [0-9]+x[0-9]{2,}(?:, [0-9]+x[0-9]{2,})+ were) unexpected considering the .+ folder name$`)
 
 func Eligible(rows []sonarr.QueueRow) bool {
 	if len(rows) == 0 {
@@ -94,6 +99,7 @@ func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 	paths := map[string]bool{}
 	ids := map[int]bool{}
 	rejected := false
+	episodeMismatch := false
 	for _, f := range o.Preview {
 		if f.ID <= 0 || ids[f.ID] || strings.TrimSpace(f.Path) == "" || paths[f.Path] || f.DownloadID != o.DownloadID || f.Rejections == nil {
 			return d, false
@@ -117,6 +123,7 @@ func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 				return d, false
 			}
 			rejected = true
+			episodeMismatch = episodeMismatch || r.Type == "permanent" && unexpectedEpisodeRejection.MatchString(r.Reason)
 		}
 	}
 	if rejected {
@@ -129,6 +136,10 @@ func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 			d.Reason = "competing active or unidentified download"
 		default:
 			d.Kind, d.Reason = "remove_blocked", "Sonarr rejects import; remove the rejected shared download"
+			if episodeMismatch {
+				d.EpisodeMismatch = true
+				d.Reason = "Sonarr reports unexpected episodes for the folder; remove the failed shared download"
+			}
 		}
 	}
 	return d, rejected

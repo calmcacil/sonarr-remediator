@@ -153,6 +153,33 @@ episode membership, quality comparison and an independent usability verdict are
 not required. One rejected media file can qualify the whole shared job. Generic
 blocked removal always suppresses blocklisting and replacement search.
 
+Within `RejectedCleanup`, recognize only permanent rejections matching Sonarr's
+anchored singular/plural `Episode(s) ... was/were unexpected considering the ...
+folder name` grammar. The source is
+[MatchesFolderSpecification](https://github.com/Sonarr/Sonarr/blob/cab419ade8ac7fcab5bf80394ee492abd35d5f5a/src/NzbDrone.Core/MediaFiles/EpisodeImport/Specifications/MatchesFolderSpecification.cs).
+Sonarr compares parsed file and folder episode identities; preview associations
+can still agree with the queue, so do not compare those IDs to infer this failure.
+Set an optional `episode_mismatch` decision flag after validating the entire
+preview. Keep the existing `remove_blocked` action and verification contract.
+One mismatch can qualify a shared pack. A shared cleanup-wait helper returns zero
+only for an approved mismatched `remove_blocked` decision; scheduling, persisted
+cleanup-due time and manual reports use it. All submission gates and fresh
+fingerprint checks remain. Temporary/unknown wording keeps the configured wait.
+
+This changes cleanup-enabled behavior: mismatched downloaded data can be deleted
+on the first successful observation. Release records must identify this earlier
+deletion as a breaking behavior change. Deployment needs only an image update;
+there is no new configuration, mount, identity or schema migration. Older
+schema-2 decisions lack the optional flag and retain their normal wait. Removal
+history keeps the existing action kind for reconciliation across image rollback.
+
+Rule 27 regression evidence must cover singular/plural exact verdicts and near
+misses, first-scan automatic deletion with explicit client-removal flags, dry-run
+and manual zero-wait reporting, library preservation, malformed mixed previews,
+scope/permissions/competition/budgets/cooldowns, fresh rejection clearing, and
+uncertain removal/restart without replay. Run the required repository checks and
+packaged rootless smoke path after the focused tests.
+
 Persist `sonarr_rejected`, `rejected_elapsed_ns` and `rejected_last_seen` as optional observation fields
 in schema 2. Missing fields start with zero rejected progress. Accrue only between
 successful rejected observations; ignore downtime/read gaps, preserve progress
@@ -353,7 +380,7 @@ rootless containers; real active acceptance is a separately authorized step.
 | 8-14 | Complete/empty/changing pagination, absent timestamps, protected tracked states, shared IDs, failed scans, persisted waits |
 | 15-22 | Captured browser/API case matrix, strict upgrade/profile grouping/revisions, all rejections, missing intended episodes, pack atomic policy, fresh execution checks |
 | 23-24 | Three-attempt bound, 15-minute spacing, no blind retry, correlated file/history verification, partial and external outcomes |
-| 25-30 | Six-hour cleanup, exact unusable catalog, redundancy proof, explicit DELETE flags, no implicit search, partial effect and search continuation |
+| 25-30 | Six-hour cleanup with immediate permanent episode-mismatch exception, exact unusable catalog, redundancy proof, explicit DELETE flags, no implicit search, partial effect and search continuation |
 | 31-36 | Mutation caps and cooldowns across restart, dry-run separation, duplicate process lock, state write failure, crash-before/after transmission |
 | 37-43 | Local query/JSON output, redaction, health distinctions, retention, native rootless Podman permissions/persistence/shutdown on both platforms, secondary Docker recipe |
 

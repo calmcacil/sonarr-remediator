@@ -29,12 +29,14 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) > 1 && (os.Args[1] == "delay-preview" || os.Args[1] == "next-download" || os.Args[1] == "reject-download") {
+	if len(os.Args) > 1 && (os.Args[1] == "delay-preview" || os.Args[1] == "next-download" || os.Args[1] == "reject-download" || os.Args[1] == "mismatch-download") {
 		path := "preview-delay"
 		if os.Args[1] == "next-download" {
 			path = "next-download"
 		} else if os.Args[1] == "reject-download" {
 			path = "reject-download"
+		} else if os.Args[1] == "mismatch-download" {
+			path = "mismatch-download"
 		}
 		r, e := http.Post("http://127.0.0.1:8989/fixture/"+path, "application/json", nil)
 		if e != nil {
@@ -73,6 +75,13 @@ func main() {
 		}
 		if r.Method == "POST" && r.URL.Path == "/fixture/reject-download" {
 			preview["rejections"] = []any{map[string]string{"reason": "Unable to determine if file is a sample", "type": "permanent"}}
+			w.WriteHeader(204)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/fixture/mismatch-download" {
+			removed = false
+			row["downloadId"], preview["downloadId"] = "mismatched-download", "mismatched-download"
+			preview["rejections"] = []any{map[string]string{"reason": "Episode 1x01 was unexpected considering the Example.1x12 folder name", "type": "permanent"}}
 			w.WriteHeader(204)
 			return
 		}
