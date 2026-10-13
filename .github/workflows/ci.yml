@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 2
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           version: 2026.10.8
           cache_key: mise-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum') }}
@@ -36,11 +36,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 2
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           version: 2026.10.8
           install_args: python
@@ -50,7 +50,7 @@ jobs:
           SRA_REVISION: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
         run: mise run ci:podman
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: image-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -76,19 +76,19 @@ jobs:
           GO_RESULT: ${{ needs.go.result }}
           PODMAN_RESULT: ${{ needs.podman.result }}
         run: test "$GO_RESULT" = success && test "$PODMAN_RESULT" = success
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 2
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           version: 2026.10.8
           install_args: python
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: image-amd64-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/amd64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: image-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/arm64
@@ -98,7 +98,7 @@ jobs:
           GO_RESULT: ${{ needs.go.result }}
           PODMAN_RESULT: ${{ needs.podman.result }}
         run: mise exec -- python scripts/oci-evidence.py gate
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/receipt.json
