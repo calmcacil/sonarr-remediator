@@ -1,8 +1,8 @@
 [tools]
 go = "1.27.2"
-python = "3.14.8"
+python = "3.15.0"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
-"aqua:rhysd/actionlint" = "1.7.11"
+"aqua:rhysd/actionlint" = "1.7.12"
 gh = "2.102.0"
 
 [env]
