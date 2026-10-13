@@ -187,3 +187,6 @@ defined by [the service spec](../sonarr-remediator/PRODUCT.md).
 - Renovate maintains the mise tool/runtime pins, shared Go/module/container
   toolchain, image digests, and full action SHAs through ordinary CI-gated PRs.
   Automerge is disabled; there is no scheduled duplicate CI workflow.
+- CI and release runners remain on Ubuntu 24.04 for amd64 and arm64. Renovate
+  does not upgrade Ubuntu runner labels; a manual platform migration must
+  validate workflow lint and native rootless Podman on both architectures.

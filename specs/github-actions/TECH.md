@@ -72,6 +72,10 @@ sole intentionally allowlisted third-party action. Renovate's native `mise`
 manager updates runtimes/checkers; grouped Go updates include go.mod and both
 Go Containerfiles. Contract tests fail when their patch versions differ.
 Renovate also updates full action SHAs, workflow mise versions, and image digests.
+A package rule disables only `ubuntu` from the `github-actions` manager's
+`github-runners` datasource, including its arm64 variant. Runner labels stay on
+`ubuntu-24.04` and `ubuntu-24.04-arm` until a manual migration validates
+actionlint and native rootless Podman on both architectures.
 All `*Containerfile` names are explicitly matched, including the fake fixture
 and official Renovate validator image. Its validator runs rootlessly from a
 digest-pinned upstream image because installing its npm graph triggered mise's
