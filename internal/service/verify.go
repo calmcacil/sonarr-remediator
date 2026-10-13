@@ -355,6 +355,7 @@ func (s *Service) search(ctx context.Context, op *state.Operation, now time.Time
 		a.CommandID = cmd.ID
 	}
 	s.response(a, e)
+	s.logMutation(a)
 	op.State = "search-attempted"
 	op.Reason = a.Reason
 	return s.Store.Save()

@@ -164,8 +164,23 @@ the latest verification evidence.
 ## Health, Logs, and Shutdown
 
 Logs are JSON on stderr by default. Set `logging.format: text` or adjust
-`logging.level` when needed. New decisions and failures are visible; identical
-decisions are deduplicated. Health requires local readiness, a recent heartbeat
+`logging.level` when needed. At INFO, a compact `service summary` reports active
+issue counts, action activity since the previous summary, unresolved actions,
+connectivity, last complete scan, and mutation budget usage. It appears after the
+first observation cycle, then every 30 minutes at a cycle boundary. A cycle that
+attempts real mutations also emits one summary and resets that interval. Empty
+queues still receive summaries; a deferred scan reports degraded connectivity
+and the last complete scan time. Resolved history is excluded from active counts.
+
+Mutation attempts and successful verification remain immediate INFO records;
+warnings and errors remain immediate. Routine issue decisions and dry-run
+recommendations wait for the next summary. Set `logging.level: debug` or
+`SRA_LOGGING__LEVEL=debug` for detailed `issue decision` records, including changing
+wait progress; identical state/reason pairs remain deduplicated. Manual previews
+do not affect summaries. Summary counters and intervals restart with the process;
+use `actions` for durable history. Version 0.4.1 needs only an image-version update.
+
+Health requires local readiness, a recent heartbeat
 and complete scan within three polling intervals, Sonarr connectivity, and no
 unresolved required-read failure. Policy deferrals and budget limits are healthy.
 Sonarr outages degrade health while the observer continues to retry reads.
