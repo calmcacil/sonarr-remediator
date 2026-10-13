@@ -31,6 +31,13 @@
       "groupName": "GitHub Actions"
     },
     {
+      "description": "Keep Ubuntu 24.04 runners until a manual CI platform migration is validated",
+      "matchManagers": ["github-actions"],
+      "matchDatasources": ["github-runners"],
+      "matchPackageNames": ["ubuntu"],
+      "enabled": false
+    },
+    {
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang"],
       "enabled": true,

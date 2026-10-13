@@ -110,6 +110,13 @@ automerge is disabled, and updates rebase when behind main. Renovate PRs use the
 same required CI and maintainer squash merge as other changes; there is no new
 scheduled CI workflow or publisher token in PR CI.
 
+Ubuntu runner updates are disabled in Renovate. Both workflows stay on
+`ubuntu-24.04` and `ubuntu-24.04-arm`; a runner upgrade requires a manual PR
+that validates actionlint and native rootless Podman on both architectures.
+The exception matches only the `github-actions` manager's `github-runners`
+datasource and `ubuntu` package. Action versions, SHAs, and container image
+updates remain enabled.
+
 An extraction-only upstream Renovate run detected all five mise pins, all three
 Containerfiles, both workflows, and all six mise runtime versions. Its native
 `github-actions` manager handles the runtime inputs; no custom regex is needed.
