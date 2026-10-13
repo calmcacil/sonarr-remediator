@@ -177,7 +177,7 @@ func (s *Service) Cycle(parent context.Context) error {
 		identity := policy.QueueIdentity(rows)
 		eligible := policy.Eligible(rows)
 		o, observed := observations[id]
-		_, rejected := policy.RejectedCleanup(s.Config, o)
+		rejectedDecision, rejected := policy.RejectedCleanup(s.Config, o)
 		rejected = observed && rejected
 		if i == nil {
 			if !eligible {
@@ -222,7 +222,7 @@ func (s *Service) Cycle(parent context.Context) error {
 		} else if i.RecoveryDue.IsZero() {
 			i.RecoveryDue = now
 		}
-		if cleanupElapsed(i) < s.Config.Cleanup.Wait {
+		if cleanupElapsed(i) < s.cleanupWait(rejectedDecision) {
 			i.CleanupDue = time.Time{}
 		} else if i.CleanupDue.IsZero() {
 			i.CleanupDue = now
@@ -328,7 +328,7 @@ func (s *Service) Cycle(parent context.Context) error {
 		}
 		wait := s.Config.Recovery.Wait
 		if d.Kind != "import" {
-			wait = s.Config.Cleanup.Wait
+			wait = s.cleanupWait(d)
 		}
 		elapsed := i.Elapsed
 		if d.Kind != "import" {
@@ -443,6 +443,13 @@ func cleanupElapsed(i *state.Issue) time.Duration {
 		return i.RejectedElapsed
 	}
 	return i.Elapsed
+}
+
+func (s *Service) cleanupWait(d policy.Decision) time.Duration {
+	if d.Kind == "remove_blocked" && d.EpisodeMismatch {
+		return 0
+	}
+	return s.Config.Cleanup.Wait
 }
 
 func (s *Service) decision(o policy.Observation) policy.Decision {

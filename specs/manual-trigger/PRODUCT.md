@@ -67,7 +67,9 @@ continue to apply.
 ### Wait Override and Permissions
 
 8. Without `--override-wait`, the configured observed-eligibility waits and episode
-   cooldowns apply. `--override-wait` skips `recovery.wait`, `cleanup.wait` and
+   cooldowns apply. The base policy's permanent episode/folder mismatch cleanup
+   has zero initial wait, including on the first observation, and reports no
+   manual bypass. `--override-wait` skips `recovery.wait`, `cleanup.wait` and
    `limits.episode_cooldown` for this manual request, including cooldowns from
    another download affecting the same episode. It does not lower the stored
    waits or fabricate elapsed observation.
@@ -97,9 +99,11 @@ continue to apply.
 13. Recovery continues to take precedence over cleanup. Cleanup accepts proven
     redundancy, complete explicit Sample/No audio tracks verdicts, or a valid
     explicit Sonarr import rejection under the base contract. Rejected-download
-    cleanup uses observed rejected time for its wait; a manual wait override can
-    skip it. Mapping, membership, sample-detection and access rejections can
-    qualify. Empty/unavailable/malformed previews and local/API failures cannot.
+    cleanup uses observed rejected time for its wait, except for permanent
+    episode/folder mismatches with zero wait; a manual wait override can skip
+    the configured wait. Mapping, membership, sample-detection and access
+    rejections can qualify. Empty/unavailable/malformed previews and local/API
+    failures cannot.
 
 14. Cleanup output explicitly states that removal uses the download client and
     can delete downloaded data. Blocklisting and replacement search choices are

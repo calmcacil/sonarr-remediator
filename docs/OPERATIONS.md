@@ -17,7 +17,8 @@ Completed `importPending` downloads are observed like `importBlocked` and
 `importFailed` downloads. Automatic recovery respects `recovery.wait` (15m by
 default), and cleanup respects `cleanup.wait` (6h by default). Waiting progress
 starts with this observer's successful scans, not Sonarr's queue-added timestamp;
-old pending downloads do not immediately become due after an image update.
+Old pending downloads retain this wait after an image update unless Sonarr
+reports the permanent episode mismatch described below.
 A valid Sonarr rejection starts a separate observed rejected-time clock. After
 `cleanup.wait`, that rejection authorizes removal of the shared download and
 downloaded data, including sample-detection failures, mapping and access blockers.
@@ -26,6 +27,19 @@ Rejection clearing resets this clock; old eligible age does not prefill it.
 or complete pack-membership proof is needed for generic rejected cleanup, and
 blocklisting/replacement search stay off for that path. Empty, malformed or
 unavailable previews, active `importing` work and unresolved actions remain protected.
+
+Permanent Sonarr `Episode ... was unexpected considering the ... folder name`
+and plural `Episodes ... were unexpected ...` rejections identify episode
+mismatches. Cleanup removes these failed shared downloads on the first eligible
+scan without `cleanup.wait`; manual preview also reports zero wait without
+`--override-wait`. Client-data deletion can include a whole pack. Other wording
+and temporary rejections retain their configured wait. All scope, competition,
+cooldown, budget and pending/uncertain-action gates remain, and this path never
+blocklists or searches. Library files are preserved. This is a breaking behavior
+change for cleanup-enabled installations in v0.4.0; updating the image
+requires no configuration or state migration. Disable cleanup if this earlier
+automatic deletion is unwanted.
+
 Version 0.3.0 broadens cleanup-enabled behavior: Sonarr-rejected jobs previously
 preserved for manual review now qualify for deletion after the rejected wait.
 Updating the image is sufficient; existing settings and schema-2 history remain

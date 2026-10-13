@@ -2,6 +2,7 @@
 
 Status: approved by the operator on 2026-10-12, alongside TECH.md. This document
 defines the agreed behavior for the clean rewrite.
+Episode-mismatch cleanup was amended by the operator on 2026-10-13.
 
 ## Summary
 
@@ -83,7 +84,8 @@ exposes no web server or network port and requires no media-directory mount.
     text and a completed queue label alone do not override those protected states.
 
 11. Recovery waits 15 minutes of observed eligibility by default. Cleanup waits
-    at least six hours of observed eligibility. These waits are configurable
+    six hours by default, except for Sonarr's explicit permanent episode/folder
+    mismatch rejection described in rule 27. These waits are configurable
     independently. A queue-added timestamp is diagnostic and never substitutes
     for observing that the download is completed in a candidate tracked state.
     A completed `importPending` download starts accumulating observed eligibility
@@ -145,7 +147,8 @@ exposes no web server or network port and requires no media-directory mount.
 21. Every preview rejection prevents import, including custom-format rejection,
     unresolved TheXEM mapping, and "Unable to determine if file is a sample".
     Sonarr's current rejection, whether temporary or permanent, authorizes
-    cleanup after the rejected-time wait. The service does not force an import.
+    cleanup after the rejected-time wait, except for immediate episode-mismatch
+    cleanup under rule 27. The service does not force an import.
 
 22. A competing queued, downloading, paused, importing, or pending-import
     download for an affected episode defers intervention. Completed alternatives
@@ -194,6 +197,19 @@ exposes no web server or network port and requires no media-directory mount.
     membership in a restricted series scope. Generic rejected cleanup does not
     blocklist or search. It preserves existing library files and deletes the
     downloaded job/data through the download client.
+
+    When Sonarr permanently rejects a file because its episode or episodes were
+    unexpected considering the folder name, treat the shared download as failed
+    and remove it from the queue and download client on the first eligible scan,
+    without the cleanup wait. This applies to the exact singular/plural Sonarr
+    verdict, including one mismatched file in a mixed pack; it does not infer a
+    mismatch from queue warnings, filenames, or preview/queue IDs. Unrecognized
+    wording and temporary rejections retain the configured rejected-time wait.
+    Cleanup must be enabled; dry-run, scope, competing downloads, cooldowns,
+    mutation limits, required reads and pending/uncertain-action protection still
+    apply. Recheck the rejection before submission. Preserve library files and
+    suppress blocklisting and replacement search. Reports identify the mismatch
+    and show a zero cleanup wait without claiming a manual wait override.
 
     Rejected time accrues only between successful observations of rejection.
     It survives restart, excludes downtime/read-failure gaps, and resets when
