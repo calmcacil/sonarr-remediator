@@ -1,7 +1,10 @@
+# Configuration and overrides: docs/CONFIGURATION.md
 sonarr:
   url: http://sonarr:8989
+  # Use exactly one credential source: api_key_file or api_key.
   api_key_file: /config/sonarr_api_key
   timeout: 10s
+# Manual trigger --execute can authorize one live cycle despite this setting.
 dry_run: true
 poll_interval: 60s
 state_path: /state/remediator.db
@@ -11,8 +14,11 @@ recovery:
   max_attempts: 3
   retry_interval: 15m
 cleanup:
+  # Can delete a whole download pack's client data; see docs/POLICY.md.
   enabled: false
+  # Permanent episode/folder mismatches bypass this wait.
   wait: 6h
+  # Both permissions require cleanup.enabled; generic rejected cleanup uses neither.
   blocklist: false
   replacement_search: false
 limits:

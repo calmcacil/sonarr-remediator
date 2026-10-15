@@ -1,9 +1,7 @@
 services:
   remediator:
-    image: ghcr.io/calmcacil/sonarr-remediator:v0.4.0
-    build:
-      context: .
-      dockerfile: Containerfile
+    # Pin a released v<VERSION> tag or digest for controlled updates.
+    image: ghcr.io/calmcacil/sonarr-remediator:latest
     user: "65532:65532"
     read_only: true
     cap_drop: [ALL]
