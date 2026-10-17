@@ -68,18 +68,20 @@ checks or substitute a previously built application for changed source.
 
 Implementation uses SHA-pinned `jdx/mise-action` with an explicit mise version,
 and `mise run check`/`mise exec --` for project tooling in all jobs. It is the
-sole intentionally allowlisted third-party action. Renovate's native `mise`
-manager updates runtimes/checkers; grouped Go updates include go.mod and both
-Go Containerfiles. Contract tests fail when their patch versions differ.
-Renovate also updates full action SHAs, workflow mise versions, and image digests.
-A package rule disables only `ubuntu` from the `github-actions` manager's
-`github-runners` datasource, including its arm64 variant. Runner labels stay on
-`ubuntu-24.04` and `ubuntu-24.04-arm` until a manual migration validates
-actionlint and native rootless Podman on both architectures.
-All `*Containerfile` names are explicitly matched, including the fake fixture
-and official Renovate validator image. Its validator runs rootlessly from a
-digest-pinned upstream image because installing its npm graph triggered mise's
-provenance-downgrade protection. No trust-policy exemption is configured.
+sole intentionally allowlisted third-party action. Renovate enables only its
+native `mise` manager for `mise.toml` tool pins. Dependabot owns `gomod`,
+`github-actions`, `docker` (root and `scripts/`) and `docker-compose` (root),
+checking weekly with a seven-day cooldown and five open PRs per ecosystem.
+Its Docker fetcher recognizes all three `*Containerfile` names without aliases.
+Preserve full Action SHAs and image digests. Go updates across the two bots
+must synchronize mise, go.mod and both Go builder images before merge; contract
+checks reject patch-version drift. Explicit workflow mise runtime inputs and
+Ubuntu runner labels stay manual. Keep `ubuntu-24.04`/`ubuntu-24.04-arm` until
+a manual migration validates actionlint and native Podman on both architectures.
+
+Renovate's validator runs rootlessly from a digest-pinned upstream image because
+installing its npm graph triggered mise's provenance-downgrade protection. No
+trust-policy exemption is configured. Dependabot owns updates to that image.
 
 Give Go checks a 15-minute timeout, each native container job 25 minutes, and
 the gate five minutes. Matrix `fail-fast: false` preserves both platform failure

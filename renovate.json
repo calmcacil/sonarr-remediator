@@ -1,13 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", "docker:pinDigests"],
-  "enabledManagers": ["mise", "gomod", "dockerfile", "github-actions"],
+  "extends": ["config:recommended"],
+  "enabledManagers": ["mise"],
   "automerge": false,
   "rebaseWhen": "behind-base-branch",
   "prConcurrentLimit": 5,
-  "dockerfile": {
-    "managerFilePatterns": ["/(^|/)[^/]*Containerfile$/"]
-  },
   "packageRules": [
     {
       "description": "The govulncheck executable is versioned by its parent Go module",
@@ -16,32 +13,9 @@
       "overridePackageName": "golang.org/x/vuln"
     },
     {
-      "description": "Update the local, CI, module, and container Go toolchain together",
-      "matchPackageNames": ["go", "golang", "golang/go", "docker.io/library/golang"],
-      "groupName": "Go toolchain",
-      "groupSlug": "go-toolchain"
-    },
-    {
       "matchManagers": ["mise"],
-      "matchPackageNames": ["!go", "!golang/go"],
+      "matchPackageNames": ["*"],
       "groupName": "mise tools"
-    },
-    {
-      "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions"
-    },
-    {
-      "description": "Keep Ubuntu 24.04 runners until a manual CI platform migration is validated",
-      "matchManagers": ["github-actions"],
-      "matchDatasources": ["github-runners"],
-      "matchPackageNames": ["ubuntu"],
-      "enabled": false
-    },
-    {
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["golang"],
-      "enabled": true,
-      "rangeStrategy": "bump"
     }
   ]
 }
