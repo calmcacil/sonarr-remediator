@@ -104,11 +104,18 @@ Renovate GHCR index and arm64 manifest/config blob, verifying digests without
 publishing. GitHub download tests rejected corrupt ZIPs, unexpected files/hosts,
 and forwarding the workflow token to artifact storage.
 
-An extraction-only upstream Renovate run detected all five mise pins, all three
+The original extraction-only upstream Renovate run detected all five mise pins, all three
 Containerfiles, both workflows, and all six mise runtime versions. Its native
 `github-actions` manager handled runtime inputs without custom regex. The Go
 group included native mise identity `golang/go`; the other mise group excluded
 it. Extraction used no token; GitHub lookups required normal App authentication.
+
+After the operator requested separate dependency ownership, a new extraction-only
+run with the pinned Renovate image detected exactly one manager (`mise`), one file
+and five dependencies. The Dependabot configuration passes JSON Schema validation
+and covers Actions, Go modules, all three Containerfiles and Compose. The full
+`mise run check` passes with 32 Python checks; the obsolete Renovate configuration
+shape assertion was removed while toolchain and workflow safety checks remain.
 
 Two implementation observations informed the checked-in tooling:
 

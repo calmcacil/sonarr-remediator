@@ -184,9 +184,10 @@ defined by [the service spec](../sonarr-remediator/PRODUCT.md).
   before merge and explicit release publication to public GHCR.
 - Immutable version/component tags and stable `latest`, with no downgrade or
   prerelease promotion of `latest`.
-- Renovate maintains the mise tool/runtime pins, shared Go/module/container
-  toolchain, image digests, and full action SHAs through ordinary CI-gated PRs.
-  Automerge is disabled; there is no scheduled duplicate CI workflow.
-- CI and release runners remain on Ubuntu 24.04 for amd64 and arm64. Renovate
-  does not upgrade Ubuntu runner labels; a manual platform migration must
-  validate workflow lint and native rootless Podman on both architectures.
+- Renovate maintains only the five `mise.toml` tool pins. Dependabot maintains
+  Go modules, container image inputs, Compose images and full Action SHAs through
+  ordinary CI-gated PRs. Automerge is disabled; separate-bot Go updates require
+  synchronized pins before merge. There is no scheduled duplicate CI workflow.
+- CI and release runners remain on Ubuntu 24.04 for amd64 and arm64. Runner labels
+  and explicit workflow mise runtime versions are maintained manually; platform
+  migration must validate workflow lint and native Podman on both architectures.

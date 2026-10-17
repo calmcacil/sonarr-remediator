@@ -63,23 +63,31 @@ emitted check/app, apply/read back settings, and exercise disposable owner
 push/force/delete and stale/failed-PR checks without changing production refs.
 An absent required check is blocking.
 
-## Renovate
+## Dependency Updates
 
-Enable the Renovate GitHub App for the repository. `renovate.json` manages Go
-modules, the five mise tool pins, all `*Containerfile` inputs, Action SHAs, and
-explicit mise runtime versions in workflows. Govulncheck releases are looked up
-through `golang.org/x/vuln`, not its executable import path.
+Enable the Renovate GitHub App for the repository. `renovate.json` enables only
+the native `mise` manager for the five tool pins in `mise.toml`. Govulncheck
+releases are looked up through `golang.org/x/vuln`, not its executable import
+path. Renovate automerge is disabled; updates rebase behind main and use normal
+CI and maintainer squash merge.
 
-Go updates group mise's `golang/go`, the `go.mod` directive, and both Go builder
-images into one PR; the contract test rejects drift. Other tools/actions have
-focused groups. Keep image digests and full Action SHAs. Automerge is disabled;
-updates rebase behind main and use normal CI and maintainer squash merge.
-There is no scheduled test workflow or publisher token in PR CI.
+`.github/dependabot.yml` owns Go modules, full Action SHAs, all three
+`*Containerfile` image inputs, and `compose.yaml`. It checks weekly, with a
+seven-day version-update cooldown and at most five open PRs per ecosystem.
+Docker inputs in the root and `scripts/` share one update entry. Renovate does
+not also update these files.
+See the [Dependabot options reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)
+for schedules, cooldowns and directory discovery.
 
-Runner updates are intentionally manual: Renovate disables only the
-`github-actions` manager's `github-runners` datasource for `ubuntu`. Changing
-`ubuntu-24.04` or `ubuntu-24.04-arm` requires actionlint and native rootless Podman
-acceptance on both architectures. Action and image updates remain enabled.
+The Go patch version must still agree across `mise.toml`, `go.mod`, and both Go
+builder images. Updates from separate bots are not atomic: synchronize those
+pins in the proposed change before merging; CI rejects toolchain drift. The
+explicit mise runtime `with.version` inputs in workflows require manual updates
+together across all jobs; Dependabot updates Action references, not those inputs.
+
+Runner updates remain manual. Keep `ubuntu-24.04` and `ubuntu-24.04-arm` until a
+platform migration passes actionlint and native rootless Podman acceptance on
+both architectures. No scheduled duplicate CI or publisher token is added.
 
 Run `mise run renovate:check` to validate configuration. It uses the official
 release image pinned by tag and multi-platform digest in

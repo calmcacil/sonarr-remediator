@@ -27,7 +27,7 @@ class ToolchainContractTests(unittest.TestCase):
         expected = configuration["tools"]["go"]
         self.assertRegex(expected, r"^[0-9]+\.[0-9]+\.[0-9]+$")
         module = re.search(r"^go (\S+)$", (ROOT / "go.mod").read_text(), re.MULTILINE).group(1)
-        self.assertEqual(module, expected, "Renovate must update the shared Go toolchain together")
+        self.assertEqual(module, expected, "Go updates must synchronize mise, go.mod and builder images")
         for file in ("Containerfile", "scripts/FakeContainerfile"):
             with self.subTest(file=file):
                 builder = re.search(r"^FROM docker.io/library/golang:([0-9.]+)-[^@]+@sha256:[0-9a-f]{64} AS build$",
@@ -57,17 +57,6 @@ class ToolchainContractTests(unittest.TestCase):
         self.assertEqual(len(mise_versions), 6)
         self.assertEqual(len(set(mise_versions)), 1, "mise itself must update consistently across every job")
 
-    def test_renovate_updates_all_mise_tools_and_shared_go_pins_with_no_automerge(self):
-        config = json.loads((ROOT / "renovate.json").read_text())
-        self.assertIn("mise", config["enabledManagers"])
-        self.assertFalse(config["automerge"])
-        group = next(rule for rule in config["packageRules"] if rule.get("groupSlug") == "go-toolchain")
-        self.assertTrue({"go", "golang", "golang/go", "docker.io/library/golang"}.issubset(group["matchPackageNames"]))
-        self.assertIn("github-actions", config["enabledManagers"])
-        vulnerability_tool = next(rule for rule in config["packageRules"] if "overridePackageName" in rule)
-        self.assertEqual(vulnerability_tool["overridePackageName"], "golang.org/x/vuln")
-        other_mise = next(rule for rule in config["packageRules"] if rule.get("groupName") == "mise tools")
-        self.assertIn("!golang/go", other_mise["matchPackageNames"], "a later rule must not override Go's shared group")
 
 
 class APIReadTests(unittest.TestCase):
