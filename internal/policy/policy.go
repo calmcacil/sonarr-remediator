@@ -28,18 +28,33 @@ type Observation struct {
 	MembershipComplete bool
 }
 type Decision struct {
-	Kind            string              `json:"kind"`
-	Reason          string              `json:"reason"`
-	Fingerprint     string              `json:"fingerprint"`
-	EpisodeIDs      []int               `json:"episode_ids"`
-	SeriesIDs       []int               `json:"series_ids"`
-	Files           []sonarr.ImportFile `json:"files,omitempty"`
-	Blocklist       bool                `json:"blocklist"`
-	EpisodeMismatch bool                `json:"episode_mismatch,omitempty"`
+	Kind              string              `json:"kind"`
+	Reason            string              `json:"reason"`
+	Fingerprint       string              `json:"fingerprint"`
+	EpisodeIDs        []int               `json:"episode_ids"`
+	SeriesIDs         []int               `json:"series_ids"`
+	Files             []sonarr.ImportFile `json:"files,omitempty"`
+	Blocklist         bool                `json:"blocklist"`
+	EpisodeMismatch   bool                `json:"episode_mismatch,omitempty"`
+	ExecutableWarning bool                `json:"executable_warning,omitempty"`
 }
 
 // Match Sonarr's verdict, not inferred episode differences or queue warnings.
 var unexpectedEpisodeRejection = regexp.MustCompile(`^(?:Episode [0-9]+x[0-9]{2,} was|Episodes [0-9]+x[0-9]{2,}(?:, [0-9]+x[0-9]{2,})+ were) unexpected considering the .+ folder name$`)
+
+func HasExecutableWarning(rows []sonarr.QueueRow) bool {
+	for _, q := range rows {
+		if q.TrackedStatus != "warning" {
+			continue
+		}
+		for _, status := range q.StatusMessages {
+			if slices.Contains(status.Messages, "Caution: Found executable file") {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func Eligible(rows []sonarr.QueueRow) bool {
 	if len(rows) == 0 {
@@ -58,7 +73,8 @@ func Eligible(rows []sonarr.QueueRow) bool {
 // The boolean records a scoped rejection even while cleanup is disabled.
 func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 	d := Decision{Kind: "defer", Fingerprint: Fingerprint(o), EpisodeIDs: []int{}, SeriesIDs: []int{}}
-	if !Eligible(o.Rows) || len(o.Preview) == 0 {
+	warning := HasExecutableWarning(o.Rows)
+	if !Eligible(o.Rows) || len(o.Preview) == 0 && !warning {
 		return d, false
 	}
 	restricted := len(c.Scope.IncludeSeriesIDs) > 0 || len(c.Scope.ExcludeSeriesIDs) > 0
@@ -96,12 +112,15 @@ func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 			return d, false
 		}
 	}
+	if restricted && !knownQueueSeries && len(o.Preview) == 0 {
+		return d, false
+	}
 	paths := map[string]bool{}
 	ids := map[int]bool{}
-	rejected := false
+	rejected := warning
 	episodeMismatch := false
 	for _, f := range o.Preview {
-		if f.ID <= 0 || ids[f.ID] || strings.TrimSpace(f.Path) == "" || paths[f.Path] || f.DownloadID != o.DownloadID || f.Rejections == nil {
+		if f.ID <= 0 || ids[f.ID] || strings.TrimSpace(f.Path) == "" || paths[f.Path] || f.DownloadID != o.DownloadID || !warning && f.Rejections == nil {
 			return d, false
 		}
 		paths[f.Path] = true
@@ -139,6 +158,10 @@ func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 			if episodeMismatch {
 				d.EpisodeMismatch = true
 				d.Reason = "Sonarr reports unexpected episodes for the folder; remove the failed shared download"
+			}
+			if warning {
+				d.ExecutableWarning = true
+				d.Reason = "Sonarr warns of an executable file; remove the failed shared download"
 			}
 		}
 	}
@@ -203,10 +226,11 @@ func Fingerprint(o Observation) string {
 	}
 	sort.Slice(m, func(i, j int) bool { return m[i].Path < m[j].Path })
 	return hash(struct {
-		Queue    string
-		Files    []material
-		Intended []int
-	}{QueueIdentity(o.Rows), m, o.Intended})
+		Queue             string
+		Files             []material
+		Intended          []int
+		ExecutableWarning bool
+	}{QueueIdentity(o.Rows), m, o.Intended, HasExecutableWarning(o.Rows)})
 }
 func SeriesAllowed(c config.Config, id int) bool {
 	return id > 0 && !slices.Contains(c.Scope.ExcludeSeriesIDs, id) && (len(c.Scope.IncludeSeriesIDs) == 0 || slices.Contains(c.Scope.IncludeSeriesIDs, id))

@@ -37,6 +37,7 @@ type fake struct {
 	mutations                               []string
 	bodies                                  []json.RawMessage
 	deleteQuery                             string
+	emptyPreview                            bool
 	empty, readFail, ambiguous, queueVanish bool
 }
 
@@ -88,6 +89,9 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result = map[string]any{"page": 1, "pageSize": 100, "totalRecords": len(rows), "records": rows}
 	case path == "manualimport":
 		result = append([]sonarr.Preview{f.preview}, f.extraPreview...)
+		if f.emptyPreview {
+			result = []sonarr.Preview{}
+		}
 	case path == "episode/100":
 		result = f.episode
 	case path == "episodefile/200":

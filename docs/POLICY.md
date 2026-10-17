@@ -28,6 +28,7 @@ are preserved. There is no queue-only cleanup mode.
 | Cleanup case | Eligibility and effects |
 | --- | --- |
 | Persistent Sonarr rejection | A valid rejection persisting for `cleanup.wait` (default six hours) can authorize deletion, including indeterminate samples, mapping/access failures and unknown rejection wording. No complete pack-membership or independent upgrade proof is required. Never blocklists or searches. |
+| Executable-file warning | Sonarr's explicit `Caution: Found executable file` queue status message authorizes removal on the first eligible scan, even with an empty import preview. Never blocklists or searches. |
 | Permanent episode/folder mismatch | Sonarr's explicit permanent `Episode ... was unexpected considering the ... folder name` rejection, including its plural form, can authorize deletion on the first eligible scan without the cleanup wait. Never blocklists or searches. |
 | Explicit unusable media | The separate `Sample` / `No audio tracks detected` path can blocklist or request replacements only with the corresponding permissions and full required evidence. |
 | Redundant download | Equal or inferior candidates can be removed when acceptable library files exist for every intended episode. |
@@ -37,9 +38,10 @@ rejection and resets when the blocker clears. Earlier eligible age does not
 prefill it. Downtime and failed reads do not advance it. Other rejection wording
 and temporary episode mismatches retain the configured wait.
 
-Empty, malformed, or unavailable previews do not authorize deletion. Scope,
-competition, cooldowns, mutation budgets, and pending/uncertain-action protection
-still apply, including to immediate episode-mismatch cleanup.
+Empty previews alone do not authorize deletion; the explicit executable-file
+warning is a separate authority that does not require a media preview. Malformed
+or failed required reads remain protected. Scope, competition, cooldowns, mutation
+budgets, and pending/uncertain-action protection still apply to immediate cleanup.
 
 ## Budgets and Uncertain Outcomes
 

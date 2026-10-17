@@ -23,6 +23,7 @@ and the existing state directory.
 
 | Version | Operator impact |
 | --- | --- |
+| 0.5.0 | Breaking cleanup behavior: Sonarr's `Caution: Found executable file` queue warning can delete the shared download and client data on the first eligible scan, even with an empty preview. Disable cleanup before upgrading if this deletion is unwanted. Image-version update only; no configuration or state migration. |
 | 0.4.1 | INFO logs use periodic service summaries; detailed decisions require DEBUG. Image-version update only. |
 | 0.4.0 | Breaking cleanup behavior: permanent episode/folder mismatches can delete the shared download and client data on the first eligible scan, without the six-hour wait. Disable cleanup if this earlier deletion is unwanted. No configuration or state migration is required. |
 | 0.3.0 | Cleanup broadens to valid persistent Sonarr rejections previously kept for manual review, including mapping/access blockers. Keep `cleanup.enabled: false` if automatic deletion is unwanted. Existing settings/schema-2 history remain valid; new rejected-time fields start at zero. |

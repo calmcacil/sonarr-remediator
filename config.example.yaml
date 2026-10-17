@@ -16,7 +16,7 @@ recovery:
 cleanup:
   # Can delete a whole download pack's client data; see docs/POLICY.md.
   enabled: false
-  # Permanent episode/folder mismatches bypass this wait.
+  # Permanent episode/folder mismatches and executable-file warnings bypass this wait.
   wait: 6h
   # Both permissions require cleanup.enabled; generic rejected cleanup uses neither.
   blocklist: false

@@ -239,6 +239,26 @@ def main():
             assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "3"
             assert run("podman", "exec", fake, "/fake-sonarr", "library-id").stdout.strip() == "200"
             checks += ["episode-mismatch-cleanup"]
+            run("podman", "stop", "--time", "30", app)
+            run("podman", "rm", app)
+            run("podman", "exec", fake, "/fake-sonarr", "executable-download")
+            start()
+            ready()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                cleanup = query("actions", "--download-id", "executable-download")
+                if cleanup and cleanup[0]["outcome"] == "verified":
+                    break
+                time.sleep(0.2)
+            else:
+                raise AssertionError("executable warning with empty preview did not clean up immediately")
+            assert cleanup[0]["kind"] == "remove_blocked" and cleanup[0]["removal_verified"]
+            assert cleanup[0]["decision"]["executable_warning"] and not cleanup[0]["decision"]["blocklist"]
+            assert not cleanup[0].get("wait_override", False) and not cleanup[0]["dry_run"]
+            assert query("show", "executable-download")["state"] == "resolved"
+            assert run("podman", "exec", fake, "/fake-sonarr", "stats").stdout.strip() == "4"
+            assert run("podman", "exec", fake, "/fake-sonarr", "library-id").stdout.strip() == "200"
+            checks += ["executable-warning-empty-preview-cleanup"]
             # A config error and unreadable state must fail before observation/action.
             invalid = run("podman", "run", "--rm", "--network", network, "--read-only",
                           "--cap-drop=all", "--security-opt=no-new-privileges", args.image,

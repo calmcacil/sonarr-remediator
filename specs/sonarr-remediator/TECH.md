@@ -166,6 +166,15 @@ only for an approved mismatched `remove_blocked` decision; scheduling, persisted
 cleanup-due time and manual reports use it. All submission gates and fresh
 fingerprint checks remain. Temporary/unknown wording keeps the configured wait.
 
+Recognize the exact queue `statusMessages[].messages[]` executable-file warning
+as separate cleanup authority before preview-dependent import/rejection policy.
+Carry an optional executable-warning decision flag and include warning evidence
+in the observation fingerprint so fresh submission rejects a cleared warning.
+Use `remove_blocked` with zero cleanup wait and ordinary removal verification.
+Empty media previews do not block this authority; failed required reads still do.
+Never infer authority from a release title or executable filename. Preserve
+existing permissions, scope, eligibility, competition and submission guards.
+
 This changes cleanup-enabled behavior: mismatched downloaded data can be deleted
 on the first successful observation. Release records must identify this earlier
 deletion as a breaking behavior change. Deployment needs only an image update;

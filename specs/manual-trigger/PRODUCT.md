@@ -67,10 +67,11 @@ continue to apply.
 ### Wait Override and Permissions
 
 8. Without `--override-wait`, the configured observed-eligibility waits and episode
-   cooldowns apply. The base policy's permanent episode/folder mismatch cleanup
-   has zero initial wait, including on the first observation, and reports no
-   manual bypass. `--override-wait` skips `recovery.wait`, `cleanup.wait` and
-   `limits.episode_cooldown` for this manual request, including cooldowns from
+   cooldowns apply. The base policy's permanent episode/folder mismatch and
+   executable-file warning cleanup have zero initial wait, including on the first
+   observation, and report no manual bypass. `--override-wait` skips
+   `recovery.wait`, `cleanup.wait` and `limits.episode_cooldown` for this manual
+   request, including cooldowns from
    another download affecting the same episode. It does not lower the stored
    waits or fabricate elapsed observation.
 
@@ -96,14 +97,14 @@ continue to apply.
     recovery attempt exhaustion, mutation budgets, state/read failures, or
     pending, partial and uncertain outcomes. Blocked work is explained and kept.
 
-13. Recovery continues to take precedence over cleanup. Cleanup accepts proven
-    redundancy, complete explicit Sample/No audio tracks verdicts, or a valid
-    explicit Sonarr import rejection under the base contract. Rejected-download
-    cleanup uses observed rejected time for its wait, except for permanent
-    episode/folder mismatches with zero wait; a manual wait override can skip
-    the configured wait. Mapping, membership, sample-detection and access
-    rejections can qualify. Empty/unavailable/malformed previews and local/API
-    failures cannot.
+13. Recovery normally takes precedence over cleanup; executable-file warnings
+    instead select immediate cleanup. Cleanup accepts proven redundancy,
+    complete explicit Sample/No audio tracks verdicts, a valid Sonarr import
+    rejection, or the exact executable-file queue status message under the base
+    contract. Rejected cleanup uses observed rejected time except for immediate
+    mismatch/executable cleanup. Empty previews authorize nothing on their own,
+    but do not prevent cleanup authorized by the executable warning. Malformed
+    required reads and local/API failures cannot authorize deletion.
 
 14. Cleanup output explicitly states that removal uses the download client and
     can delete downloaded data. Blocklisting and replacement search choices are
