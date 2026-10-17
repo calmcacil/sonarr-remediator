@@ -41,7 +41,8 @@ Cleanup, blocklisting, and replacement search default off:
 - Those additional permissions do not apply to generic Sonarr-rejected cleanup.
 
 Read [policy](POLICY.md) before enabling cleanup. A permanent episode/folder
-mismatch can qualify on the first eligible scan, without `cleanup.wait`.
+mismatch or explicit executable-file queue warning can qualify on the first
+eligible scan, without `cleanup.wait`. Executable warnings need no media preview.
 Manual `trigger --execute` can authorize one live cycle while background dry-run
 remains enabled; it does not enable otherwise disabled cleanup permissions.
 

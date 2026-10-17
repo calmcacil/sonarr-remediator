@@ -3,16 +3,23 @@ package sonarr
 import "time"
 
 type QueueRow struct {
-	ID             int        `json:"id"`
-	DownloadID     string     `json:"downloadId"`
-	SeriesID       *int       `json:"seriesId"`
-	EpisodeID      *int       `json:"episodeId"`
-	DownloadClient string     `json:"downloadClient"`
-	Title          string     `json:"title"`
-	OutputPath     string     `json:"outputPath"`
-	Status         string     `json:"status"`
-	TrackedState   string     `json:"trackedDownloadState"`
-	Added          *time.Time `json:"added"`
+	ID             int             `json:"id"`
+	DownloadID     string          `json:"downloadId"`
+	SeriesID       *int            `json:"seriesId"`
+	EpisodeID      *int            `json:"episodeId"`
+	DownloadClient string          `json:"downloadClient"`
+	Title          string          `json:"title"`
+	OutputPath     string          `json:"outputPath"`
+	Status         string          `json:"status"`
+	TrackedState   string          `json:"trackedDownloadState"`
+	TrackedStatus  string          `json:"trackedDownloadStatus"`
+	Added          *time.Time      `json:"added"`
+	StatusMessages []StatusMessage `json:"statusMessages"`
+}
+
+type StatusMessage struct {
+	Title    string   `json:"title"`
+	Messages []string `json:"messages"`
 }
 
 func (q QueueRow) Eligible() bool {

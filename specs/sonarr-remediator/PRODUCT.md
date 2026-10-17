@@ -3,6 +3,7 @@
 Status: approved by the operator on 2026-10-12, alongside TECH.md. This document
 defines the agreed behavior for the clean rewrite.
 Episode-mismatch cleanup was amended by the operator on 2026-10-13.
+Executable-warning cleanup was amended by the operator on 2026-10-17.
 
 ## Summary
 
@@ -85,7 +86,8 @@ exposes no web server or network port and requires no media-directory mount.
 
 11. Recovery waits 15 minutes of observed eligibility by default. Cleanup waits
     six hours by default, except for Sonarr's explicit permanent episode/folder
-    mismatch rejection described in rule 27. These waits are configurable
+    mismatch rejection or executable-file queue warning described in rule 27.
+    These waits are configurable
     independently. A queue-added timestamp is diagnostic and never substitutes
     for observing that the download is completed in a candidate tracked state.
     A completed `importPending` download starts accumulating observed eligibility
@@ -147,8 +149,8 @@ exposes no web server or network port and requires no media-directory mount.
 21. Every preview rejection prevents import, including custom-format rejection,
     unresolved TheXEM mapping, and "Unable to determine if file is a sample".
     Sonarr's current rejection, whether temporary or permanent, authorizes
-    cleanup after the rejected-time wait, except for immediate episode-mismatch
-    cleanup under rule 27. The service does not force an import.
+    cleanup after the rejected-time wait, except for immediate cleanup under
+    rule 27. The service does not force an import.
 
 22. A competing queued, downloading, paused, importing, or pending-import
     download for an affected episode defers intervention. Completed alternatives
@@ -170,12 +172,12 @@ exposes no web server or network port and requires no media-directory mount.
 
 ### Cleanup and Replacement
 
-25. Recovery takes precedence over cleanup. Cleanup requires its own enabled
-    setting, six-hour wait, fresh complete observation, current preview, scope,
-    and safety checks. Age, retry exhaustion, a local/API error, or an empty
-    preview never independently authorize deletion. A valid explicit Sonarr
-    preview rejection is sufficient judgment for rejected-download cleanup;
-    remediator does not require an independent quality or usability verdict.
+25. Recovery normally takes precedence over cleanup; an executable-file warning
+    instead selects immediate cleanup. Cleanup requires its own enabled setting,
+    fresh complete observation, scope and safety checks. Age, retry exhaustion,
+    a local/API error, or an empty preview never independently authorize deletion.
+    A valid explicit Sonarr preview rejection is sufficient judgment for rejected
+    cleanup; the executable-file queue warning needs no media preview.
 
 26. Redundancy cleanup requires that every intended episode has an acceptable
     existing library file and every remaining previewed candidate is equal or
@@ -210,6 +212,15 @@ exposes no web server or network port and requires no media-directory mount.
     apply. Recheck the rejection before submission. Preserve library files and
     suppress blocklisting and replacement search. Reports identify the mismatch
     and show a zero cleanup wait without claiming a manual wait override.
+
+    Sonarr's exact queue status message `Caution: Found executable file` authorizes
+    immediate whole-download removal on the first eligible scan, including when
+    the manual-import preview is empty. A filename ending in `.exe`, a status
+    message title, or unrelated warning is not authority. Cleanup permission,
+    dry-run, scope, protected tracked states, competition, cooldowns, mutation
+    limits and pending/uncertain protections remain. Recheck the current warning
+    before submission. Never execute downloaded files, blocklist, or search via
+    this path. Preserve library files; report zero wait without a manual override.
 
     Rejected time accrues only between successful observations of rejection.
     It survives restart, excludes downtime/read-failure gaps, and resets when

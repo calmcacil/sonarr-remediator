@@ -103,7 +103,8 @@ Share the following sequence between preview and execution:
    projections on a deep isolated view, not maps/slices aliased to live state.
 4. Evaluate policy, then initial waiting, then existing pending/retry/cooldown/hour
    gates. Use the same policy-derived cleanup wait as automatic work: an approved
-   permanent episode/folder mismatch has zero wait and reports no manual bypass.
+   permanent episode/folder mismatch or executable-file warning has zero wait
+   and reports no manual bypass.
    An explicit manual wait override skips the initial wait comparison and
    completed-action episode cooldowns in both planning and fresh execution checks.
    Pending/partial/uncertain effects, retry spacing, exhaustion and budgets still apply.

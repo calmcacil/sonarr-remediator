@@ -11,7 +11,8 @@ are outside its scope.
 - Background work starts in dry-run mode. Review decisions before enabling it.
 - Cleanup, blocklisting, and replacement searches are disabled separately.
 - Cleanup can delete downloaded data, including a whole pack. Permanent
-  episode/folder mismatches can qualify immediately, without the cleanup wait.
+  episode/folder mismatches and explicit executable-file warnings can qualify
+  immediately, without the cleanup wait; executable warnings need no media preview.
 - Manual `trigger --execute` authorizes one live cycle even during background
   dry-run; configured permissions and mutation limits still apply.
 

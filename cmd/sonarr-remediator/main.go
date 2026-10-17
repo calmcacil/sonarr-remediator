@@ -20,7 +20,7 @@ import (
 	"github.com/calmcacil/sonarr-remediator/internal/state"
 )
 
-var version = "0.4.1"
+var version = "0.5.0"
 
 func main() {
 	if e := execute(os.Args[1:], os.Stdout, os.Stderr); e != nil {

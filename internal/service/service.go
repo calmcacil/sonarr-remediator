@@ -461,13 +461,20 @@ func cleanupElapsed(i *state.Issue) time.Duration {
 }
 
 func (s *Service) cleanupWait(d policy.Decision) time.Duration {
-	if d.Kind == "remove_blocked" && d.EpisodeMismatch {
+	if d.Kind == "remove_blocked" && (d.EpisodeMismatch || d.ExecutableWarning) {
 		return 0
 	}
 	return s.Config.Cleanup.Wait
 }
 
 func (s *Service) decision(o policy.Observation) policy.Decision {
+	if policy.HasExecutableWarning(o.Rows) {
+		d, _ := policy.RejectedCleanup(s.Config, o)
+		if d.Reason == "" {
+			d.Reason = "executable warning cleanup identity or scope unresolved"
+		}
+		return d
+	}
 	d := policy.Evaluate(s.Config, o)
 	if d.Kind == "defer" {
 		if rejected, present := policy.RejectedCleanup(s.Config, o); present {
@@ -476,6 +483,7 @@ func (s *Service) decision(o policy.Observation) policy.Decision {
 	}
 	return d
 }
+
 func (s *Service) setIssue(i *state.Issue, status, reason string) {
 	if i.State != status || i.Reason != reason {
 		s.Log.Debug("issue decision", "download_id", i.DownloadID, "episodes", i.Decision.EpisodeIDs, "state", status, "reason", reason)
