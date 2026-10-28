@@ -1,9 +1,9 @@
 [tools]
-go = "1.27.2"
-python = "3.15.0"
+go = "1.27.3"
+python = "3.15.2"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
 "aqua:rhysd/actionlint" = "1.7.12"
-gh = "2.102.0"
+gh = "2.103.3"
 
 [env]
 GOTOOLCHAIN = "local"
