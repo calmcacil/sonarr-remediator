@@ -1,9 +1,9 @@
 [tools]
-go = "1.27.2"
-python = "3.15.0"
-"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+go = "1.27.4"
+python = "3.15.2"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.10.0"
 "aqua:rhysd/actionlint" = "1.7.12"
-gh = "2.102.0"
+gh = "2.106.0"
 
 [env]
 GOTOOLCHAIN = "local"
@@ -23,6 +23,10 @@ run = "python -m unittest discover -s scripts -p 'test_*.py'"
 [tasks."renovate:check"]
 description = "Validate dependency automation with the official Renovate validator"
 run = "bash scripts/renovate-check.sh"
+
+[tasks."release:dependencies"]
+description = "Check Go dependency and builder freshness before promotion"
+run = "python scripts/dependency-freshness.py"
 
 [tasks."ci:podman"]
 description = "Build and exercise the native rootless image (SRA_ARCHITECTURE and SRA_REVISION required)"

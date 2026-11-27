@@ -19,14 +19,24 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          version: 2026.10.8
-          install_args: python
+          version: 2026.11.14
+          install_args: python go
       - name: Verify release, merged PR, successful CI, and exact images
+        id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: mise exec -- python scripts/release.py verify
+        run: |
+          mise exec -- python scripts/release.py verify
+          jq -er '"commit=" + .commit' artifacts/release/plan.json >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.evidence.outputs.commit }}
+          path: release-source
+          persist-credentials: false
+      - name: Require current Go modules and builder for the tested source
+        run: mise exec -- python scripts/dependency-freshness.py release-source
   component:
     needs: verify
     strategy:
@@ -50,9 +60,9 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          version: 2026.10.8
+          version: 2026.11.14
           install_args: python
       - name: Install digest-preserving transfer tool on disposable runner
         run: |
@@ -79,9 +89,9 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          version: 2026.10.8
+          version: 2026.11.14
           install_args: python
       - name: Publish deterministic index, advance stable latest, verify public pulls
         env:
