@@ -142,6 +142,8 @@ defined by [the service spec](../sonarr-remediator/PRODUCT.md).
     successful run in the fresh repository, exact tested source-tree agreement
     with the tagged squash commit, both image artifacts, and complete evidence.
     A directly pushed or unverified commit cannot satisfy this check.
+    Promotion also requires current Go module and builder pins for the exact
+    verified release source. Unavailable upstream version information blocks it.
 
 23. Version tags such as `v1.0.0` are immutable in GHCR. An existing tag with the
     same expected image/index digest is an idempotent result; a different digest

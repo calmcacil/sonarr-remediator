@@ -215,6 +215,10 @@ in-progress releases. Before any write, the verification job checks:
    version agree; both expected archives remain available within five days.
 5. Archive hashes, platform/config/manifest identities, and native rootless
    runtime evidence match. A stale artifact from another run/attempt is rejected.
+6. Declared Go modules resolve to current releases, with SQLite paired to its
+   upstream-pinned libc, and the Go toolchain and pinned builders match current
+   upstream releases. Run the freshness check on the verified release commit,
+   not the `main` workflow checkout. On lookup failure do not promote.
 
 Use GitHub's merged-PR/commit association API to find the candidate run, then
 cross-check the receipt. Do not rely on the squash commit having its own CI run

@@ -23,12 +23,23 @@ type APIError struct {
 
 func (e *APIError) Error() string { return fmt.Sprintf("Sonarr %s (HTTP %d)", e.Kind, e.Code) }
 
+type dialect string
+
+const (
+	apiV3 dialect = "v3"
+	apiV5 dialect = "v5"
+)
+
+var ErrUnsupportedVersion = errors.New("unsupported Sonarr version: requires v4 or v5")
+
 type Client struct {
-	base   *url.URL
-	key    string
-	http   *http.Client
-	dryRun bool
-	cache  map[string]cachedRead
+	base    *url.URL
+	key     string
+	http    *http.Client
+	dryRun  bool
+	cache   map[string]cachedRead
+	api     dialect
+	lastAPI dialect
 }
 type cachedRead struct {
 	value any
@@ -40,7 +51,7 @@ func (c *Client) BeginCycle() { c.cache = make(map[string]cachedRead) }
 // ForCycle keeps the configured client immutable while sharing its connection
 // pool. The request owns the new read cache and explicit mutation boundary.
 func (c *Client) ForCycle(dryRun bool) *Client {
-	return &Client{base: c.base, key: c.key, http: c.http, dryRun: dryRun}
+	return &Client{base: c.base, key: c.key, http: c.http, dryRun: dryRun, lastAPI: c.lastAPI}
 }
 
 func New(raw, key string, timeout time.Duration, dry bool) (*Client, error) {
@@ -54,11 +65,18 @@ func New(raw, key string, timeout time.Duration, dry bool) (*Client, error) {
 	return &Client{base: u, key: key, http: h, dryRun: dry}, nil
 }
 func (c *Client) request(ctx context.Context, method, path string, q url.Values, body, out any) error {
+	return c.requestAPI(ctx, c.api, method, path, q, body, out)
+}
+
+func (c *Client) requestAPI(ctx context.Context, api dialect, method, path string, q url.Values, body, out any) error {
 	if method != http.MethodGet && c.dryRun {
 		return errors.New("dry-run mutation boundary rejected request")
 	}
+	if api == "" {
+		return errors.New("Sonarr API not identified for this cycle")
+	}
 	u := *c.base
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/v3/" + path
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/" + string(api) + "/" + path
 	u.RawPath = ""
 	u.RawQuery = q.Encode()
 	var reader io.Reader
@@ -108,18 +126,77 @@ func (c *Client) request(ctx context.Context, method, path string, q url.Values,
 	}
 	return nil
 }
+
+// Version binds one API for the cycle. Only status can probe another route.
 func (c *Client) Version(ctx context.Context) (string, error) {
+	c.api = ""
+	c.BeginCycle()
+	api := c.lastAPI
+	if api == "" {
+		api = apiV3
+	}
+	version, major, err := c.status(ctx, api)
+	var response *APIError
+	var missingV5 error
+	if errors.As(err, &response) && response.Code == http.StatusNotFound {
+		if api == apiV3 {
+			api = apiV5
+		} else {
+			missingV5 = err
+			api = apiV3
+		}
+		version, major, err = c.status(ctx, api)
+	}
+	if err != nil {
+		return "", err
+	}
+	if api == apiV3 && major == 5 {
+		if missingV5 != nil {
+			return "", missingV5
+		}
+		api = apiV5
+		version, major, err = c.status(ctx, api)
+		if err != nil {
+			return "", err
+		}
+	}
+	if api == apiV3 && major != 4 || api == apiV5 && major != 5 {
+		return "", errors.New("Sonarr system status does not match the API version")
+	}
+	c.api, c.lastAPI = api, api
+	return version, nil
+}
+
+func (c *Client) status(ctx context.Context, api dialect) (string, int, error) {
 	var s struct {
 		Version string `json:"version"`
 	}
-	e := c.request(ctx, "GET", "system/status", nil, nil, &s)
-	if e != nil {
-		return "", e
+	if err := c.requestAPI(ctx, api, http.MethodGet, "system/status", nil, nil, &s); err != nil {
+		return "", 0, err
 	}
-	if !strings.HasPrefix(s.Version, "4.") {
-		return "", errors.New("unsupported Sonarr version: requires v4")
+	head, tail, dotted := strings.Cut(s.Version, ".")
+	major, err := strconv.Atoi(head)
+	if !dotted || err != nil || major <= 0 || head[0] < '1' || head[0] > '9' || !validVersionTail(tail) {
+		return "", 0, errors.New("invalid Sonarr application version")
 	}
-	return s.Version, nil
+	if major != 4 && major != 5 {
+		return "", 0, ErrUnsupportedVersion
+	}
+	return s.Version, major, nil
+}
+
+func validVersionTail(tail string) bool {
+	for range 3 {
+		part, rest, more := strings.Cut(tail, ".")
+		if part == "" || strings.Trim(part, "0123456789") != "" {
+			return false
+		}
+		if !more {
+			return true
+		}
+		tail = rest
+	}
+	return false
 }
 
 type page[T any] struct {
@@ -170,37 +247,59 @@ func pages[T any](ctx context.Context, c *Client, path string, q url.Values, max
 	return nil, errors.New("Sonarr pagination limit exceeded")
 }
 func (c *Client) Queue(ctx context.Context) ([]QueueRow, error) {
-	var e error
-	for i := 0; i < 3; i++ {
-		var rows []QueueRow
-		rows, e = pages(ctx, c, "queue", url.Values{"includeUnknownSeriesItems": {"true"}, "sortKey": {"timeleft"}, "sortDirection": {"ascending"}}, 1000, func(q QueueRow) int { return q.ID })
-		if e == nil {
-			for _, row := range rows {
-				if row.SeriesID != nil && *row.SeriesID < 0 || row.EpisodeID != nil && *row.EpisodeID < 0 {
-					return nil, errors.New("invalid queue target identity")
-				}
-				if strings.TrimSpace(row.DownloadID) == "" {
-					pending := row.TrackedState == "" && (row.Status == "delay" || row.Status == "downloadClientUnavailable" || row.Status == "fallback")
-					if !pending {
-						return nil, errors.New("missing tracked queue download identity")
+	q := url.Values{"includeUnknownSeriesItems": {"true"}, "sortKey": {"timeleft"}, "sortDirection": {"ascending"}}
+	var err error
+	for range 3 {
+		if c.api == apiV5 {
+			var rows []v5QueueResource
+			rows, err = pages(ctx, c, "queue", q, 1000, func(r v5QueueResource) int { return r.ID })
+			if err == nil {
+				return normalizeV5Queue(rows)
+			}
+		} else {
+			var rows []QueueRow
+			rows, err = pages(ctx, c, "queue", q, 1000, func(r QueueRow) int { return r.ID })
+			if err == nil {
+				for _, row := range rows {
+					if err := row.validate(); err != nil {
+						return nil, err
 					}
 				}
+				return rows, nil
 			}
-			return rows, nil
 		}
 		if ctx.Err() != nil {
 			break
 		}
 	}
-	return nil, e
+	return nil, err
 }
+
 func (c *Client) Preview(ctx context.Context, id string) ([]Preview, error) {
 	var p []Preview
-	e := c.request(ctx, "GET", "manualimport", url.Values{"downloadId": {id}, "filterExistingFiles": {"false"}}, nil, &p)
-	if e == nil && p == nil {
-		e = errors.New("null preview")
+	q := url.Values{"filterExistingFiles": {"false"}}
+	if c.api == apiV5 {
+		q.Set("downloadIds", id)
+		var wire []v5Preview
+		if err := c.request(ctx, "GET", "manualimport", q, nil, &wire); err != nil {
+			return nil, err
+		}
+		p = make([]Preview, len(wire))
+		for i := range wire {
+			p[i] = wire[i].normalize()
+		}
+	} else {
+		q.Set("downloadId", id)
+		if err := c.request(ctx, "GET", "manualimport", q, nil, &p); err != nil {
+			return nil, err
+		}
 	}
-	return p, e
+	for _, candidate := range p {
+		if candidate.DownloadID != id {
+			return nil, errors.New("manual import preview download identity mismatch")
+		}
+	}
+	return p, nil
 }
 func resource[T any](ctx context.Context, c *Client, path string, id int, getID func(T) int) (T, error) {
 	key := path + "/" + strconv.Itoa(id)
@@ -233,13 +332,17 @@ func (c *Client) Command(ctx context.Context, id int) (Command, error) {
 	return resource(ctx, c, "command", id, func(e Command) int { return e.ID })
 }
 func (c *Client) Media(ctx context.Context) (MediaManagement, error) {
-	if hit, ok := c.cache["config/mediamanagement"]; ok {
+	path := "config/mediamanagement"
+	if c.api == apiV5 {
+		path = "settings/mediamanagement"
+	}
+	if hit, ok := c.cache[path]; ok {
 		return hit.value.(MediaManagement), hit.err
 	}
 	var m MediaManagement
-	e := c.request(ctx, "GET", "config/mediamanagement", nil, nil, &m)
+	e := c.request(ctx, "GET", path, nil, nil, &m)
 	if c.cache != nil {
-		c.cache["config/mediamanagement"] = cachedRead{value: m, err: e}
+		c.cache[path] = cachedRead{value: m, err: e}
 	}
 	return m, e
 }
@@ -266,5 +369,13 @@ func (c *Client) Submit(ctx context.Context, body any) (Command, error) {
 	return cmd, e
 }
 func (c *Client) Remove(ctx context.Context, id int, blocklist bool) error {
-	return c.request(ctx, "DELETE", "queue/"+strconv.Itoa(id), url.Values{"removeFromClient": {"true"}, "blocklist": {strconv.FormatBool(blocklist)}, "skipRedownload": {"true"}, "changeCategory": {"false"}}, nil, nil)
+	path := "queue/" + strconv.Itoa(id)
+	if c.api == apiV5 {
+		method := "doNotBlocklist"
+		if blocklist {
+			method = "blocklistOnly"
+		}
+		return c.request(ctx, "DELETE", path, url.Values{"removalMethod": {"removeFromClient"}, "blocklistMethod": {method}}, nil, nil)
+	}
+	return c.request(ctx, "DELETE", path, url.Values{"removeFromClient": {"true"}, "blocklist": {strconv.FormatBool(blocklist)}, "skipRedownload": {"true"}, "changeCategory": {"false"}}, nil, nil)
 }

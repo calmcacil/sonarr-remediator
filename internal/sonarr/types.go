@@ -1,6 +1,11 @@
 package sonarr
 
-import "time"
+import (
+	"errors"
+	"slices"
+	"strings"
+	"time"
+)
 
 type QueueRow struct {
 	ID             int             `json:"id"`
@@ -15,6 +20,9 @@ type QueueRow struct {
 	TrackedStatus  string          `json:"trackedDownloadStatus"`
 	Added          *time.Time      `json:"added"`
 	StatusMessages []StatusMessage `json:"statusMessages"`
+
+	nativeV5          bool
+	executableWarning bool
 }
 
 type StatusMessage struct {
@@ -24,6 +32,32 @@ type StatusMessage struct {
 
 func (q QueueRow) Eligible() bool {
 	return q.DownloadID != "" && q.Status == "completed" && (q.TrackedState == "importBlocked" || q.TrackedState == "importFailed" || q.TrackedState == "importPending")
+}
+
+func (q QueueRow) HasExecutableWarning() bool {
+	if q.nativeV5 {
+		return q.executableWarning
+	}
+	if q.TrackedStatus == "warning" {
+		for _, status := range q.StatusMessages {
+			if slices.Contains(status.Messages, "Caution: Found executable file") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (q QueueRow) validate() error {
+	if q.SeriesID != nil && *q.SeriesID < 0 || q.EpisodeID != nil && *q.EpisodeID < 0 {
+		return errors.New("invalid queue target identity")
+	}
+	if strings.TrimSpace(q.DownloadID) == "" {
+		if q.TrackedState != "" || q.Status != "delay" && q.Status != "downloadClientUnavailable" && q.Status != "fallback" {
+			return errors.New("missing tracked queue download identity")
+		}
+	}
+	return nil
 }
 
 type NamedID struct {
@@ -63,7 +97,14 @@ type EpisodeFile struct {
 type Rejection struct {
 	Reason string `json:"reason"`
 	Type   string `json:"type"`
+	Code   string `json:"code,omitempty"`
+	v5     bool
 }
+
+func (r Rejection) Valid() bool {
+	return (r.Type == "temporary" || r.Type == "permanent") && strings.TrimSpace(r.Reason) != "" && (!r.v5 || knownV5Rejection(r.Code))
+}
+
 type Preview struct {
 	ID           int         `json:"id"`
 	Path         string      `json:"path"`

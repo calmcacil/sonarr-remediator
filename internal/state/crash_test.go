@@ -30,7 +30,11 @@ func TestCrashIntentChild(t *testing.T) {
 	}
 	if stage == "after-transmission" {
 		client, _ := sonarr.New(os.Getenv("SRA_TEST_URL"), "fixture-key", time.Second, false)
-		if _, e = client.Submit(context.Background(), sonarr.ImportCommand{Name: "ManualImport", ImportMode: "auto"}); e != nil {
+		ctx := context.Background()
+		if _, e = client.Version(ctx); e != nil {
+			os.Exit(4)
+		}
+		if _, e = client.Submit(ctx, sonarr.ImportCommand{Name: "ManualImport", ImportMode: "auto"}); e != nil {
 			os.Exit(4)
 		}
 	}
@@ -42,6 +46,14 @@ func TestProcessCrashBeforeAndAfterTransmission(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/api/v3/system/status" {
+					json.NewEncoder(w).Encode(map[string]string{"version": "4.0.20.3014"})
+					return
+				}
+				if r.Method != http.MethodPost || r.URL.Path != "/api/v3/command" {
+					http.NotFound(w, r)
+					return
+				}
 				requests.Add(1)
 				json.NewEncoder(w).Encode(sonarr.Command{ID: 42, Name: "ManualImport", Status: "queued"})
 			}))

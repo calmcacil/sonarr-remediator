@@ -1,9 +1,10 @@
 # Recovery and Cleanup Policy
 
-The service handles completed Sonarr v4 downloads in `importBlocked`,
-`importFailed`, or `importPending`. It leaves downloading, queued, paused,
-`importing`, and `imported` work alone. Shared queue rows produce one decision
-per download. Sonarr performs matching and all media operations.
+The service handles completed Sonarr downloads in `importBlocked` or
+`importPending`. It also recognizes the legacy v4 `importFailed` state. It leaves
+downloading, queued, paused, `importing`, and `imported` work alone. Both v4
+episode rows and v5 grouped queue records produce one decision per download.
+Sonarr performs matching and all media operations.
 
 ## Recovery
 
@@ -13,6 +14,8 @@ not count as time observed by this service.
 
 Every media file must pass policy before an import is requested. Rejected or
 ambiguous files defer the whole pack. Imports require complete episode membership.
+Multi-episode queue groups and packs require grabbed history even when the
+preview returns only one file.
 Existing files are replaced only for a strict improvement under Sonarr's current
 quality profile: grouped qualities compare equally, and cutoffs, minimum
 custom-format scores, and proper/repack preference apply. An accepted preview
@@ -27,10 +30,10 @@ are preserved. There is no queue-only cleanup mode.
 
 | Cleanup case | Eligibility and effects |
 | --- | --- |
-| Persistent Sonarr rejection | A valid rejection persisting for `cleanup.wait` (default six hours) can authorize deletion, including indeterminate samples, mapping/access failures and unknown rejection wording. No complete pack-membership or independent upgrade proof is required. Never blocklists or searches. |
-| Executable-file warning | Sonarr's explicit `Caution: Found executable file` queue status message authorizes removal on the first eligible scan, even with an empty import preview. Never blocklists or searches. |
-| Permanent episode/folder mismatch | Sonarr's explicit permanent `Episode ... was unexpected considering the ... folder name` rejection, including its plural form, can authorize deletion on the first eligible scan without the cleanup wait. Never blocklists or searches. |
-| Explicit unusable media | The separate `Sample` / `No audio tracks detected` path can blocklist or request replacements only with the corresponding permissions and full required evidence. |
+| Persistent Sonarr rejection | A valid rejection persisting for `cleanup.wait` (default six hours) can authorize deletion, including indeterminate samples and mapping/access failures. Unknown v5 rejection codes do not authorize cleanup. No complete pack-membership or independent upgrade proof is required. Never blocklists or searches. |
+| Executable-file warning | Sonarr's explicit `Caution: Found executable file` queue warning (with an extension on v5) authorizes removal on the first eligible scan, even with an empty import preview. Never blocklists or searches. |
+| Permanent episode/folder mismatch | A permanent `episodeUnexpected` rejection on v5, or Sonarr's explicit permanent `Episode ... was unexpected considering the ... folder name` rejection on v4, can authorize deletion on the first eligible scan without the cleanup wait. Never blocklists or searches. |
+| Explicit unusable media | A `Sample` or `No audio tracks detected` verdict (structured as `sample` or `noAudio` on v5) can blocklist or request replacements only with the corresponding permissions and full required evidence. |
 | Redundant download | Equal or inferior candidates can be removed when acceptable library files exist for every intended episode. |
 
 For generic rejected cleanup, a separate rejected-time clock starts with a valid

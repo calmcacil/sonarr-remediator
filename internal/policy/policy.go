@@ -44,13 +44,8 @@ var unexpectedEpisodeRejection = regexp.MustCompile(`^(?:Episode [0-9]+x[0-9]{2,
 
 func HasExecutableWarning(rows []sonarr.QueueRow) bool {
 	for _, q := range rows {
-		if q.TrackedStatus != "warning" {
-			continue
-		}
-		for _, status := range q.StatusMessages {
-			if slices.Contains(status.Messages, "Caution: Found executable file") {
-				return true
-			}
+		if q.HasExecutableWarning() {
+			return true
 		}
 	}
 	return false
@@ -115,6 +110,11 @@ func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 	if restricted && !knownQueueSeries && len(o.Preview) == 0 {
 		return d, false
 	}
+	for _, ep := range o.Episodes {
+		if ep.SeriesID <= 0 || !addTarget(ep.SeriesID, ep.ID) {
+			return d, false
+		}
+	}
 	paths := map[string]bool{}
 	ids := map[int]bool{}
 	rejected := warning
@@ -138,11 +138,11 @@ func RejectedCleanup(c config.Config, o Observation) (Decision, bool) {
 			}
 		}
 		for _, r := range f.Rejections {
-			if strings.TrimSpace(r.Reason) == "" || r.Type != "temporary" && r.Type != "permanent" {
+			if !r.Valid() {
 				return d, false
 			}
 			rejected = true
-			episodeMismatch = episodeMismatch || r.Type == "permanent" && unexpectedEpisodeRejection.MatchString(r.Reason)
+			episodeMismatch = episodeMismatch || r.Type == "permanent" && (r.Code == "episodeUnexpected" || r.Code == "" && unexpectedEpisodeRejection.MatchString(r.Reason))
 		}
 	}
 	if rejected {
@@ -288,7 +288,9 @@ func Evaluate(c config.Config, o Observation) Decision {
 			return block("incomplete or conflicting preview")
 		}
 		paths[f.Path] = true
-		if f.ReleaseType != "singleEpisode" && f.ReleaseType != "multiEpisode" && f.ReleaseType != "seasonPack" {
+		switch f.ReleaseType {
+		case "singleEpisode", "multiEpisode", "seasonPack", "multiSeasonPack":
+		default:
 			return block("unknown release type")
 		}
 		knownSeries, matchedSeries := false, false
@@ -323,13 +325,18 @@ func Evaluate(c config.Config, o Observation) Decision {
 		isUnusable := len(f.Rejections) > 0
 		redRejections := true
 		for _, r := range f.Rejections {
-			if r.Type != "permanent" && r.Type != "temporary" {
-				return block("unknown rejection type")
+			if !r.Valid() {
+				return block("unknown or incomplete rejection verdict")
 			}
-			if r.Reason != "Sample" && r.Reason != "No audio tracks detected" {
-				isUnusable = false
+			if r.Code == "" {
+				isUnusable = isUnusable && (r.Reason == "Sample" || r.Reason == "No audio tracks detected")
+				redRejections = redRejections && (strings.HasPrefix(r.Reason, "Not a Custom Format upgrade for existing episode file(s). New: ") || strings.HasPrefix(r.Reason, "Not an upgrade for existing episode file(s). Existing quality: ") || r.Reason == "Not a quality revision upgrade for existing episode file(s)")
+				continue
 			}
-			if !strings.HasPrefix(r.Reason, "Not a Custom Format upgrade for existing episode file(s). New: ") && !strings.HasPrefix(r.Reason, "Not an upgrade for existing episode file(s). Existing quality: ") && r.Reason != "Not a quality revision upgrade for existing episode file(s)" {
+			isUnusable = isUnusable && (r.Code == "sample" || r.Code == "noAudio")
+			switch r.Code {
+			case "notQualityUpgrade", "notRevisionUpgrade", "notCustomFormatUpgrade", "notCustomFormatUpgradeAfterRename":
+			default:
 				redRejections = false
 			}
 		}

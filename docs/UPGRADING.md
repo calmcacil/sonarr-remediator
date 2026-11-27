@@ -23,6 +23,7 @@ and the existing state directory.
 
 | Version | Operator impact |
 | --- | --- |
+| 0.6.0 | Supports Sonarr v4 and v5 beta. Image update only for existing v4 deployments; no settings or state migration in the remediator. A v5 upgrade behind a proxy that only forwards `/api/v3` requires a proxy change to allow `/api/v5`. Complete grabbed history is now required for multi-episode queue groups even when the preview has one file. |
 | 0.5.0 | Breaking cleanup behavior: Sonarr's `Caution: Found executable file` queue warning can delete the shared download and client data on the first eligible scan, even with an empty preview. Disable cleanup before upgrading if this deletion is unwanted. Image-version update only; no configuration or state migration. |
 | 0.4.1 | INFO logs use periodic service summaries; detailed decisions require DEBUG. Image-version update only. |
 | 0.4.0 | Breaking cleanup behavior: permanent episode/folder mismatches can delete the shared download and client data on the first eligible scan, without the six-hour wait. Disable cleanup if this earlier deletion is unwanted. No configuration or state migration is required. |
@@ -33,6 +34,17 @@ and the existing state directory.
 These changes do not require new mounts, ports, container identity, healthchecks
 or startup commands. Deployment changes requiring more than an image-version
 update are treated as breaking changes and must include migration instructions.
+
+Sonarr v5 compatibility targets the beta. For an in-place Sonarr upgrade:
+
+1. Stop the observer and preserve its state. Save a pre-upgrade Sonarr v4 backup.
+2. Upgrade Sonarr. Wait for it to finish refreshing the download queue before
+   restarting the observer; a complete but empty startup queue can reset waits.
+3. Start the v5-compatible remediator with the same URL, credentials, and state.
+
+Rolling the Sonarr database back to v4 requires the pre-upgrade Sonarr backup.
+An older v4-only remediator cannot run against Sonarr v5. Reconcile pending
+external effects before restoring either backup.
 
 ## Rollback
 

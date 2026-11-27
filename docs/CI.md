@@ -95,6 +95,15 @@ release image pinned by tag and multi-platform digest in
 capabilities, or credentials. Rootless Podman is required; there is no npm
 fallback or trust-policy exemption.
 
+Run `mise run release:dependencies` before preparing a release. The publisher
+runs the same check against the verified release commit before any GHCR write.
+It compares the declared Go modules, Go toolchain, and both pinned Go builder
+images with upstream. SQLite and its `modernc.org/libc` version move together:
+SQLite's upstream `go.mod` names the exact compatible libc version. A newer
+incompatible libc does not pass the gate. Unavailable upstream metadata or
+stale pins block promotion; update and validate a new release commit rather
+than moving an existing tag. CI's reachable-vulnerability scan still applies.
+
 ## Publish a Release
 
 1. Change `VERSION` in a PR and squash-merge only after CI and policy checks pass.

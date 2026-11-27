@@ -1,4 +1,4 @@
-FROM docker.io/library/golang:1.27.3-alpine3.23@sha256:8a5046497cda39860b832ffdbe8dd66018a0f05bb01352f533a36e7e2ced66a0 AS build
+FROM docker.io/library/golang:1.27.4-alpine3.24@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 WORKDIR /src
 ENV GOTOOLCHAIN=local CGO_ENABLED=0
 COPY go.mod go.sum ./

@@ -1,0 +1,137 @@
+# Sonarr v5 Compatibility Implementation Plan
+
+**Goal:** Implement [the product contract](PRODUCT.md) without changing existing v4 deployments or weakening mutation safeguards.
+
+**Architecture:** Keep one Sonarr HTTP client, one policy, and one observer. Select the API from authenticated status, normalize its wire resources at the client boundary, and keep the existing observation and durable action model.
+
+**Tech stack:** Go, HTTP/JSON, SQLite schema 2, and isolated real Sonarr installations for proof.
+
+## Context
+
+The inspected remediator revision is `cc05ac7898a01403cbd4a917b556b99f9686c324`. The [client] sends everything under `/api/v3` and rejects non-v4 status. The [observer] then reads the full queue; [observation and execution] build and refresh candidate evidence, [verification] checks durable effects, and [manual cycles] run the same workflow on an isolated client. [Queue rows] are also persisted and contribute to identity and retry fingerprints. These facts make a prefix swap or version-guard removal insufficient.
+
+Comparison baselines are [v4.0.20.3014] (`cab419a`, published stable) and [v5.0.0.3041] (`03f822c`, prerelease). The [v4 OpenAPI], [native v5 OpenAPI], and [v5 legacy OpenAPI] were compared against controllers, domain handlers, and the v5 interactive-import request builder. Upstream [API discovery] advertises `current: "v5", deprecated: ["v3"]` on the beta. Legacy v3 on that build projects episode rows and preserves older request shapes, but runs on the changed v5 backend. Do not use it to execute remediation on v5. The findings below are source evidence, not a live v5 compatibility result.
+
+### Endpoint inventory
+
+Paths are relative to `/api/v3` for Sonarr v4 and `/api/v5` for Sonarr v5. The table covers all 13 method/route pairs used by the remediator; `POST command` carries two commands.
+
+| Method and v4 path | Native v5 difference | Compatibility contract |
+| --- | --- | --- |
+| `GET system/status` | Same suffix; `version` is the application version on both the native and legacy v5 routes. The `X-Api-Key` [auth handler] still exists, independently of browser login. | Identify the major before data reads or writes; preserve base path, key header, and version display. |
+| `GET queue` | Replaces scalar `episodeId` with `episodeIds` on one row per tracked download; row IDs are computed differently. `includeSubresources` replaces optional embedded-series/episode flags. | Continue `includeUnknownSeriesItems=true`, `sortKey=timeleft`, ascending, and 100 records/page. No expansion flags needed. Validate the actual pages before projecting membership; retain every known episode and keep unknown coverage explicit. See [queue controller], [queue resource], [queue service]. |
+| `GET manualimport` | Replaces `downloadId` with a query array named `downloadIds`. Rejections change from `{reason: <text>, type}` to `{reason: <code>, message: <text>, type}`. `multiSeasonPack` is a new release type. | Send one URL-encoded `downloadIds=<opaque ID>` with `filterExistingFiles=false`, no folder or series override. Preserve all candidate fields and require each candidate to match the exact ID. Treat `[]` as a valid empty preview, not proof of import or rejection. See [preview controller] and [rejection mapper]. |
+| `GET episode/{id}` | Adds metadata and optional subresource behavior elsewhere; the default by-ID response retains `id`, `seriesId`, `episodeFileId`, `hasFile`, `monitored`. | Keep by-ID reads and presence/relationship checks, including zero file ID with `hasFile=false`. Do not infer identity from series ordering, titles, or provider IDs. |
+| `GET episodefile/{id}` | Used fields are unchanged (`id`, `seriesId`, full `path`, quality/revision, custom formats and score); unused media-info shape expands. | Keep strict identity and score checks. Compare paths as Sonarr reports them; do not translate paths on the remediator host. |
+| `GET series/{id}` | Optional `includeSubresources` replaces `includeSeasonImages`; translations and season types are additive. | Send neither optional query. Continue reading `id`, `qualityProfileId`, `monitored`, `seriesType`. |
+| `GET qualityprofile/{id}` | Core profile fields and recursive groups remain; quality items add size preferences. The pinned [quality comparer] is unchanged; the [v5 import upgrade check] adds a distinct after-rename custom-format rejection. | Keep allowed groups, cutoffs, score reconciliation, proper/repack rules, and independent strict-improvement checks. Never override Sonarr's nonempty preview verdict. Do not treat added size settings as evidence of improvement. |
+| `GET config/mediamanagement` | Moves to `GET settings/mediamanagement`; `downloadPropersAndRepacks` and its three values are unchanged. | Read the [v5 settings resource] on v5 only. Missing or unknown preference cannot approve strict recovery or cleanup that needs quality proof. |
+| `GET history` | Keeps exact `downloadId` filtering and the consumed event names; optional nested expansion uses `includeSubresources`. History still records per-episode import and failure events. | Keep `sortKey=date`, descending, bounded pages, and exact returned ID checks. `downloadFolderImported` still exposes `droppedPath`/`importedPath`; [history producer] and [serializer] establish camel-case keys. No broad history scan or title-based fallback. |
+| `GET blocklist` | Paging and `id`, `seriesId`, `episodeIds`, `sourceTitle`, `date` remain; `source` is additive, and there is still no download ID. | Keep date-descending reads and correlate against exact-download `downloadFailed` history plus title, series, episode coverage, unique matches, and attempt window. See [blocklist producer]. |
+| `GET command/{id}` | The used `id`, `name`, and `status` are unchanged; `result` adds `indeterminate` but is not a substitute for evidence. | Match the expected command name and ID. Existing failure states remain failures; `orphaned`, unknown or missing command data cannot confirm an outcome. `queued`/`started`/`completed` can confirm search submission, not its result. |
+| `POST command` | v5 returns `201` with the command resource. Although OpenAPI shows a generic `CommandResource`, the [command controller] re-deserializes the **top-level** JSON into the named command. | Keep `ManualImport` with `importMode: "auto"` and `files` carrying path, folder, series and all episode IDs, quality/revision, languages, release group, indexer flags, release type, and download ID. Keep `EpisodeSearch` with top-level `episodeIds`. Demand a positive acknowledgement ID; do not follow `Location`, nest fields under `body`, copy the UI's priority, or send an existing `episodeFileId` to overwrite metadata. See [v5 UI payload] and [command file contract]. |
+| `DELETE queue/{id}` | v5 requires both `removalMethod` and `blocklistMethod` in the controller even though OpenAPI marks them optional; acknowledgement is `204`. | On v4 keep `removeFromClient=true&blocklist=<bool>&skipRedownload=true&changeCategory=false`. On v5 send `removalMethod=removeFromClient&blocklistMethod=doNotBlocklist` or `blocklistOnly`. The [removal handler] passes `SkipRedownload=true` for `blocklistOnly` to [failed-download redownload handling]. Never use `blocklistAndSearch`, `ignore`, or `changeCategory`. Use a fresh real v5 queue ID, once per job. |
+
+Do not add `POST manualimport` (the UI's edit/reprocess action), bulk deletion, a history mutation, direct downloader calls, or a parallel API implementation.
+
+## Proposed Changes
+
+### Bind the API before scanning
+
+Modify `internal/sonarr/client.go` and `internal/service/service.go`. Split status probing from routed operations while keeping one request boundary. On first contact read `/api/v3/system/status`, the existing v4 deployment contract. App v4 selects v3; app v5 requires a successful `/api/v5/system/status` identifying v5. If the initial status route returns `404`, allow one GET on the other status route. A successful v5 status can therefore select native v5 even when legacy v3 is absent. A last-confirmed dialect can order later status probes; verify it again each cycle. Reject unsupported positive majors explicitly. Empty/malformed status, redirects, auth failures, timeouts, and server errors are degraded reads, not reasons to try another dialect. An authenticated status identifying v5 without usable native status must not activate the legacy API. `/api` is evidence for deprecation, not a new proxy dependency.
+
+Bind the selected route for the whole cycle, including fresh rechecks and pending verification. `BeginCycle` cache resets for fresh evidence must not renegotiate mid-cycle. A failed probe must not leave a usable stale selection, and ordinary read/write errors must not reroute operations. Adapt `internal/service/manual.go` and `Client.ForCycle` so each manual cycle negotiates safely with independent read caches and cannot change the live client's routing or dry-run boundary. Preserve bounded response reads, deadlines, sanitized errors, no redirects and durable intent before transmission.
+
+### Normalize the grouped queue
+
+Modify `internal/sonarr/client.go` and `internal/sonarr/types.go`. Decode v5 queue pages into a narrow wire shape with presence-aware `episodeIds` plus common queue fields. Check raw page cardinality and unique positive queue IDs before any projection; keep the existing retry/page limits and tracked versus pending identity rules. Reject missing/null `episodeIds`, nonpositive or repeated episode IDs, and multiple tracked v5 resources for the same nonempty download ID as inconsistent snapshots. An explicit `[]` is unknown membership, not a missing record.
+
+Project each valid v5 record into the existing policy/state `QueueRow` representation: one logical row per episode, or one unknown-target row for `[]`. Every projected row keeps the **same real** upstream v5 removal ID; do not invent sequential or per-episode IDs. IDs are unique on wire pages, not on the projected list. `group`, `QueueIdentity`, `Competing`, `observe`, and manual reporting then see each episode without redesigning stored JSON or resetting progress for equivalent v4/v5 coverage. In `Service.execute`, group fresh evidence by opaque download ID and use one DELETE for the group after existing identity and policy checks. An active unknown-target row remains a blocker. Neither published schema contains `importFailed`; keep that existing recognition for v4, but do not translate v5 `failed` or `failedPending` into an import-eligible state.
+
+### Adapt preview, cleanup classifiers, and mutations
+
+Modify `internal/sonarr/client.go`, `internal/sonarr/types.go`, `internal/policy/policy.go`, and `Service.observe` in `internal/service/service.go`:
+
+- Route the documented preview query, media settings read, and removal parameters by selected dialect. Share unchanged resource and command request logic; accept the v5 success statuses through the current acknowledgement checks.
+- Map v5 rejections into the shared model with [code], display message, and type. Preserve v4 text and its exact classifiers. Use `sample`/`noAudio` for the existing unusable classifier, and the distinct `notQualityUpgrade`, `notRevisionUpgrade`, `notCustomFormatUpgrade`, and `notCustomFormatUpgradeAfterRename` codes for redundancy **only** when the existing independent quality comparison also proves it. Permanent `episodeUnexpected` qualifies for the existing immediate mismatch path. Other known codes with valid verdict type and nonempty message can qualify only for ordinary rejected cleanup. Missing or unknown codes, invalid types and absent verdict arrays cannot authorize preview-based cleanup. Add code to the fingerprint when present, without changing its v4 JSON or the zero-rejection import fingerprint.
+- The v5 queue still has string-only warning messages, but the [folder] and [single-file] producers now append extensions. Recognize the exact v4 warning on v4. On v5 recognize the anchored `Caution: Found executable file with extension: ...` grammar in `statusMessages[].messages[]`, with `trackedDownloadStatus=warning`. Accept the source-backed single quoted or comma-separated dot-extension forms, not prefix-only text, `potentially dangerous file`, or `user defined rejected extension`. Derive the normalized warning verdict from fresh queue data without changing the stored row JSON or rewriting the original messages; use that verdict in the existing policy gate and fingerprint. v5's [rejection handler] can mark downloads failed itself; do not compete with it or infer an executable from a file name. An empty preview does not negate an explicit queue warning.
+- Recognize `multiSeasonPack` as a pack and forward the exact release type when it qualifies. Treat more than one distinct known target episode in the queue group as pack evidence even when preview returns only one file. For packs, require exact-download grabbed history, union it with queue and preview membership, and validate each episode's series against current library reads and all available queue/preview/grabbed evidence. Keep unsatisfied, unmatched episodes as blockers. Sonarr can [reject ambiguous season mapping]; never override that verdict or substitute numbering for IDs.
+
+### Keep state and reconciliation compatible
+
+Keep `internal/state/state.go` schema, state identity, and durable attempts intact. Check `internal/service/verify.go` against both dialects; use the selected native API to verify old attempts, not their original API version. Do not recompute stored attempt identities, clear uncertainty, replay a mutation on any response, or guess replacement IDs. Equivalent projected queue membership must not reset waits; if membership, paths, scores, or other safety evidence has genuinely changed, evaluate that change under the existing rules. For missing/contradictory migrated records, retain the attempt and existing protection. Preserve the current rule that a removal acknowledgement plus complete-queue disappearance verifies the removal; if blocklisting was requested but not correlated, the removal remains partial and replacement search stays blocked.
+
+After runtime proof, update `README.md`, `docs/DEPLOYMENT.md`, `docs/POLICY.md`, `docs/UPGRADING.md`, and the current product/tech baseline in `specs/sonarr-remediator/`. Leave historical v4 captures as recorded evidence. Existing v4 remediator deployments need only an image update. A proxy that explicitly allowlists only `/api/v3` needs to pass the required `/api/v5` routes when its Sonarr is upgraded to v5: document that conditional restriction and treat any required deployment change as breaking for the affected setup. Document Sonarr's [separate server rollback boundary]: rolling its database back to v4 needs a pre-upgrade v4 backup, and an older v4-only remediator cannot run against v5. Reconcile external actions before restoring either state snapshot. Recheck upstream schema and disposable runtime proof on stable v5 before claiming stable compatibility.
+
+### Code takes precedence over historical specs
+
+The older [API contract] is correct for v4 only. It describes a possible attempt-time history cutoff and startup version rejection; code currently fetches complete bounded history and checks status in every cycle, including the manual path. Preserve the actual behavior rather than optimizing history or changing startup semantics in this work. Its removal description uses v4 flag names; the portable invariant is removal without implicit search, not those flag names.
+
+## Testing and Validation
+
+Run the real remediator and real pinned Sonarr builds in isolated disposable environments; no added or invoked test suites, no fake Sonarr as final proof, and no real user library. Keep a disposable downloader and disposable media for the live cases. Use one remediator image for both builds. Record revision, image digest, Sonarr builds, command invocations and exit status, redacted CLI output, request method/path/status records (no credentials), and Sonarr/downloader before/after reads. Build with `mise run build`; for the container path follow the existing [operational CLI commands] with the disposable observer container. Each row is a separate proof slice, so a failure does not require repeating all other cases.
+
+| Product invariants | Real proof and expected observation |
+| --- | --- |
+| 1, 8: detection and permissions | Run v4 and v5 behind the same URL base path on separate stores. Capture `status --json`, `healthcheck`, and manual preview. v4 uses v3; v5 remediation requests use native v5. Deny access with a wrong key and make an upstream read unavailable; show degraded status and no writes. On success, use Sonarr's actual application version and show retained existing v4 config. |
+| 2, 3, 8: queue and read-only policy | Capture v4 scalar rows and v5 grouped arrays for the same logical episode set, including a second-episode competitor, unknown active coverage, and more than 100 raw rows on at least v5. Run `trigger --dry-run --override-wait --download-id ID --json`; reports must include all targets and show the correct blockers. Record zero POST/DELETE and no manual preview receipt. |
+| 3, 6: import and verification | On v5, run `trigger --execute --download-id ID --json` for an eligible missing episode, an eligible strict upgrade, and a complete multi-season pack. Capture exactly one `ManualImport` per download and `actions --json` after verification; check download-correlated history and the resulting files. Show equal, rejected, and incomplete-pack candidates with no mutation. Run one successful v4 import as a control. |
+| 4-6: cleanup and search | On v5, use separate jobs for an explicit executable warning with empty preview, a permanent mismatch, a non-executable lookalike, redundant media, and an unusable release with blocklisting enabled. Observe reasons/waits, single DELETEs with the right `blocklistMethod`, actual disposable client removal, and no implicit search. For the unusable case prove per-episode failure/blocklist correlation, then one authorized `EpisodeSearch` for only still-missing monitored episodes. Run one v4 removal as a control. |
+| 6-8: migration and ambiguity | Upgrade a disposable same-instance v4 database to v5 with the same remediator state through a stopped restart. Include an unchanged pack with accrued wait and a durable attempt whose response was withheld by a local proxy. Compare `status`, `issues`, `actions`, `triggers` and transport logs: preserved state and budget, no replay, correlation where evidence survives, and protection where it does not. Capture command/episode/blocklist reads independently of response acknowledgement. |
+
+### Runtime evidence
+
+The Linux arm64 remediator binary (`sha256:7024e67d40592676cea80df24da0d4325efb2379c539e9dc354d5e4f5e9a0371`) was built with `CGO_ENABLED=0 mise exec -- go build -trimpath -buildvcs=false -o "$PROOF/remediator" ./cmd/sonarr-remediator`. The same binary ran against the pinned v4 and v5 distributions and a local Transmission 4.1 beta, using synthetic media and disposable state. The blocklist probes seeded grabbed history only; the remediator, Sonarr, and downloader produced the subsequent effects and evidence.
+
+| Command or observation | Result |
+| --- | --- |
+| `status --json`, `healthcheck`, `trigger --dry-run --json`, `triggers --json` | Both builds connected under `/sonarr`, healthcheck exited 0, and an empty preview exited 2 with no receipt. A wrong key against v5 produced `Sonarr authentication failure (HTTP 401)`, degraded health, and zero mutations. |
+| `trigger --dry-run --download-id ID --json` on both pack queues | Two v4 records and one grouped v5 record both produced one blocked download with both episode IDs. Neither had a usable preview. |
+| `trigger --execute --override-wait --download-id ID --json` and `actions --json` for missing episodes | On both majors, one import was acknowledged and verified; `downloadFolderImported` history contained both source and destination paths, the current episode had a file ID, and the library file existed. |
+| `trigger --execute --download-id ID --json` for the v5 executable warning | Cleanup was verified, Transmission lost only the selected item and its disposable file, and no `EpisodeSearch` was queued. |
+| V5 no-audio preview, removal, and follow-on search | `noAudio` selected unusable cleanup. Incomplete upstream history yielded a partial removal and no search. With complete history, the removal and blocklist correlated; Sonarr queued zero implicit searches, and a separate explicit trigger submitted `EpisodeSearch` for the one still-missing episode. |
+| `show ID --json` and `status --json` across the stopped v4-to-v5 upgrade | Same issue identity and eligibility timestamp, two logical rows, and elapsed time retained (16 s before, 28 s after subsequent healthy cycles). Leaving the observer running during Sonarr startup instead exposed a genuinely empty queue and reset waits; follow the stopped-upgrade order in [Upgrading](../../docs/UPGRADING.md#compatibility-boundaries). |
+
+Live proof does not cover stable v5, a queue exceeding 100 records, a strict in-place file upgrade, a live multi-season import, every rejection variant, or a lost transport response during upgrade. The partial-effect probe exercised unresolved evidence without reissuing the removal.
+
+## Parallelization
+
+Keep client normalization, policy, state preservation, and mutation checks with one local implementer in the main checkout: all share the same queue/rejection representation. Once that representation is settled, one independent reviewer can inspect the final diff against this spec, and an operator can prepare disposable v4/v5 instances without editing the checkout. Land as one change after all critical runtime slices are proven; no separate branch or PR for endpoint subsets.
+
+[client]: https://github.com/calmcacil/sonarr-remediator/blob/cc05ac7898a01403cbd4a917b556b99f9686c324/internal/sonarr/client.go#L40-L123
+[observer]: https://github.com/calmcacil/sonarr-remediator/blob/cc05ac7898a01403cbd4a917b556b99f9686c324/internal/service/service.go#L126-L207
+[observation and execution]: https://github.com/calmcacil/sonarr-remediator/blob/cc05ac7898a01403cbd4a917b556b99f9686c324/internal/service/service.go#L502-L743
+[verification]: https://github.com/calmcacil/sonarr-remediator/blob/cc05ac7898a01403cbd4a917b556b99f9686c324/internal/service/verify.go#L16-L168
+[manual cycles]: https://github.com/calmcacil/sonarr-remediator/blob/cc05ac7898a01403cbd4a917b556b99f9686c324/internal/service/manual.go#L64-L114
+[queue rows]: https://github.com/calmcacil/sonarr-remediator/blob/cc05ac7898a01403cbd4a917b556b99f9686c324/internal/state/state.go#L43-L88
+[v4.0.20.3014]: https://github.com/Sonarr/Sonarr/releases/tag/v4.0.20.3014
+[v5.0.0.3041]: https://github.com/Sonarr/Sonarr/releases/tag/v5.0.0.3041
+[v4 OpenAPI]: https://github.com/Sonarr/Sonarr/blob/cab419ade8ac7fcab5bf80394ee492abd35d5f5a/src/Sonarr.Api.V3/openapi.json
+[native v5 OpenAPI]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/openapi.json
+[v5 legacy OpenAPI]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V3/openapi.json
+[API discovery]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Http/ApiInfoController.cs#L9-L17
+[auth handler]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Http/Authentication/ApiKeyAuthenticationHandler.cs#L39-L91
+[queue controller]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/Queue/QueueController.cs#L70-L175
+[removal handler]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/Queue/QueueController.cs#L328-L386
+[queue resource]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/Queue/QueueResource.cs#L45-L91
+[queue service]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/Queue/QueueService.cs#L46-L85
+[preview controller]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/ManualImport/ManualImportController.cs#L23-L51
+[rejection mapper]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/ManualImport/ManualImportResource.cs#L77-L94
+[code]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/MediaFiles/EpisodeImport/ImportRejectionReason.cs
+[reject ambiguous season mapping]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/MediaFiles/EpisodeImport/Specifications/MultiSeasonPackSpecification.cs#L22-L57
+[quality comparer]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/Qualities/QualityModelComparer.cs
+[v5 import upgrade check]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/MediaFiles/EpisodeImport/Specifications/UpgradeSpecification.cs#L45-L95
+[v5 settings resource]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/Settings/MediaManagementSettingsResource.cs#L8-L48
+[history producer]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/History/HistoryService.cs#L203-L256
+[serializer]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Common/Serializer/System.Text.Json/STJson.cs#L24-L35
+[blocklist producer]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/Blocklisting/BlocklistService.cs#L126-L145
+[command controller]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/Sonarr.Api.V5/Commands/CommandController.cs#L48-L76
+[v5 UI payload]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/frontend/src/InteractiveImport/Interactive/InteractiveImportModalContent.tsx#L590-L630
+[command file contract]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/MediaFiles/EpisodeImport/Manual/ManualImportFile.cs#L10-L22
+[failed-download redownload handling]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/Download/RedownloadFailedDownloadService.cs#L33-L40
+[folder]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/MediaFiles/EpisodeImport/RejectedFileExtensionService.cs#L24-L49
+[single-file]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/MediaFiles/DownloadedEpisodesImportService.cs#L269-L301
+[rejection handler]: https://github.com/Sonarr/Sonarr/blob/03f822c78293981e6e1459fbce59d11476b2107f/src/NzbDrone.Core/Download/RejectedImportService.cs#L25-L62
+[separate server rollback boundary]: https://forums.sonarr.tv/t/sonarr-v5-beta/41099
+[API contract]: ../sonarr-remediator/TECH.md#api-contract
+[operational CLI commands]: ../../docs/OPERATIONS.md#manual-cycles
