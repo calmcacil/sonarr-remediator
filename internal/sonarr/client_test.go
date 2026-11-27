@@ -16,6 +16,10 @@ func TestQueueContractsAndBasePath(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			calls := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/sonarr/api/v3/system/status" {
+					fmt.Fprint(w, `{"version":"4.0.20.3014"}`)
+					return
+				}
 				calls++
 				if r.URL.Path != "/sonarr/api/v3/queue" || r.URL.Query().Get("includeUnknownSeriesItems") != "true" || r.URL.Query().Get("sortKey") != "timeleft" || r.Header.Get("X-Api-Key") != "key" {
 					t.Error("wrong request contract")
@@ -52,7 +56,11 @@ func TestQueueContractsAndBasePath(t *testing.T) {
 			}))
 			defer srv.Close()
 			c, _ := New(srv.URL+"/sonarr", "key", time.Second, true)
-			rows, e := c.Queue(context.Background())
+			ctx := context.Background()
+			if _, e := c.Version(ctx); e != nil {
+				t.Fatal(e)
+			}
+			rows, e := c.Queue(ctx)
 			if mode == "complete" {
 				if e != nil || len(rows) != 101 || calls != 2 {
 					t.Fatalf("%d rows %v %d calls", len(rows), e, calls)

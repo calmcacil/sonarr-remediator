@@ -53,7 +53,9 @@ func captured(t *testing.T) map[string]Observation {
 		}
 		sort.Ints(o.Intended)
 		for _, e := range s.Episodes {
-			o.Episodes[e.ID] = e
+			if ids[e.ID] {
+				o.Episodes[e.ID] = e
+			}
 		}
 		for _, f := range s.EpisodeFiles {
 			o.Files[f.ID] = f
