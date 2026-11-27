@@ -1,10 +1,12 @@
 # Sonarr Remediator
 
-Recover completed downloads that Sonarr v4 cannot import. The service asks Sonarr
+Recover completed downloads that Sonarr v4 or v5 cannot import. The service asks Sonarr
 for automatic matches and requests imports only when every file passes policy.
 It uses Sonarr's API only: no media mounts, inbound ports, or separate database.
 Run one observer per Sonarr instance. Radarr and stalled/in-progress downloads
 are outside its scope.
+
+Sonarr v5 compatibility targets the upstream beta; stable v5 has not been verified.
 
 ## Safety Defaults
 

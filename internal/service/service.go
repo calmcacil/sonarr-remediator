@@ -139,10 +139,9 @@ func (s *Service) Cycle(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, 50*time.Second)
 	defer cancel()
 	now := s.Now()
-	s.Client.BeginCycle()
 	version, e := s.Client.Version(ctx)
 	if e != nil {
-		if strings.Contains(e.Error(), "unsupported Sonarr version") {
+		if errors.Is(e, sonarr.ErrUnsupportedVersion) {
 			return e
 		}
 		return s.failed(now, e)
@@ -506,20 +505,36 @@ func (s *Service) observe(ctx context.Context, id string, rows, queue []sonarr.Q
 		return o, e
 	}
 	o.Preview = p
-	intended := map[int]bool{}
-	pack := len(p) > 1
+	intended := map[int]int{}
+	conflictingSeries := false
+	add := func(episode, series int) {
+		if episode <= 0 {
+			return
+		}
+		found := intended[episode]
+		if found > 0 && series > 0 && found != series {
+			conflictingSeries = true
+		}
+		intended[episode] = max(found, series)
+	}
 	for _, r := range rows {
-		if r.EpisodeID != nil && *r.EpisodeID > 0 {
-			intended[*r.EpisodeID] = true
+		if r.EpisodeID != nil {
+			series := 0
+			if r.SeriesID != nil {
+				series = *r.SeriesID
+			}
+			add(*r.EpisodeID, series)
 		}
 	}
+	pack := len(intended) > 1 || len(p) > 1
 	for _, f := range p {
-		if f.ReleaseType == "seasonPack" || f.ReleaseType == "multiEpisode" || len(f.Episodes) > 1 {
+		if f.ReleaseType == "seasonPack" || f.ReleaseType == "multiSeasonPack" || f.ReleaseType == "multiEpisode" || len(f.Episodes) > 1 {
 			pack = true
 		}
 		for _, ep := range f.Episodes {
-			if ep.ID > 0 {
-				intended[ep.ID] = true
+			add(ep.ID, ep.SeriesID)
+			if f.Series != nil {
+				add(ep.ID, f.Series.ID)
 			}
 		}
 	}
@@ -537,10 +552,13 @@ func (s *Service) observe(ctx context.Context, id string, rows, queue []sonarr.Q
 					continue
 				}
 				grabbed = true
-				intended[h.EpisodeID] = true
+				add(h.EpisodeID, h.SeriesID)
 			}
 		}
 		o.MembershipComplete = o.MembershipComplete && grabbed
+	}
+	if conflictingSeries {
+		return o, errors.New("conflicting Sonarr episode series in queue, preview, or history")
 	}
 	for id := range intended {
 		o.Intended = append(o.Intended, id)
@@ -552,10 +570,8 @@ func (s *Service) observe(ctx context.Context, id string, rows, queue []sonarr.Q
 			return o, e
 		}
 		o.Episodes[eid] = ep
-		for _, r := range rows {
-			if r.EpisodeID != nil && *r.EpisodeID == eid && r.SeriesID != nil && *r.SeriesID != ep.SeriesID {
-				o.MembershipComplete = false
-			}
+		if series := intended[eid]; series > 0 && series != ep.SeriesID {
+			return o, errors.New("Sonarr episode series disagrees with current library")
 		}
 		if ep.SeriesID <= 0 {
 			continue

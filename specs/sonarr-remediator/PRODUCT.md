@@ -4,6 +4,7 @@ Status: approved by the operator on 2026-10-12, alongside TECH.md. This document
 defines the agreed behavior for the clean rewrite.
 Episode-mismatch cleanup was amended by the operator on 2026-10-13.
 Executable-warning cleanup was amended by the operator on 2026-10-17.
+Application version support was extended by the [Sonarr v5 compatibility spec](../sonarr-v5-compatibility/PRODUCT.md).
 
 ## Summary
 
@@ -15,7 +16,7 @@ downloads, blocklist releases, and request replacements.
 
 ## Scope
 
-The first release serves one Sonarr v4 instance per container. Radarr is a
+The service serves one Sonarr v4 or v5 instance per container. Radarr is a
 future extension. Downloads that are still downloading, stalled in transit,
 queued, or paused are outside the initial recovery scope.
 
@@ -28,7 +29,7 @@ exposes no web server or network port and requires no media-directory mount.
 
 ### Boundaries and Configuration
 
-1. Each running service connects to one configured Sonarr v4 instance. Sonarr
+1. Each running service connects to one configured Sonarr v4 or v5 instance. Sonarr
    is the only external application it contacts.
 
 2. All download and import operations are requested through Sonarr. The
@@ -213,9 +214,9 @@ exposes no web server or network port and requires no media-directory mount.
     suppress blocklisting and replacement search. Reports identify the mismatch
     and show a zero cleanup wait without claiming a manual wait override.
 
-    Sonarr's exact queue status message `Caution: Found executable file` authorizes
-    immediate whole-download removal on the first eligible scan, including when
-    the manual-import preview is empty. A filename ending in `.exe`, a status
+    Sonarr's explicit executable-file queue warning authorizes immediate
+    whole-download removal on the first eligible scan, including when the
+    manual-import preview is empty. A filename ending in `.exe`, a status
     message title, or unrelated warning is not authority. Cleanup permission,
     dry-run, scope, protected tracked states, competition, cooldowns, mutation
     limits and pending/uncertain protections remain. Recheck the current warning

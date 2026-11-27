@@ -10,7 +10,7 @@ starts at `862bec0`; original code at
 `71566c26107e8410d12489e55481f061e6bc3479` is historical context rather than
 an architecture to preserve. [SOURCES.md](SOURCES.md) records recovered specs.
 
-Agreed technical baselines are Go, one Sonarr v4 instance, local SQLite state,
+Agreed technical baselines are Go, one Sonarr v4 or v5 instance, local SQLite state,
 rootless Podman as primary build/runtime, rootless Docker as secondary
 compatibility, and no inbound server or direct media/download-client access.
 Go's HTTP, JSON, context, logging, and testing packages cover the core work.
@@ -60,20 +60,21 @@ against another instance until the operator explicitly chooses a new store.
 
 ### API Contract
 
-All routes are under `/api/v3`, including when the running application is v4.
-Preserve a configured URL base path. Use `X-Api-Key`, a 10-second request timeout
-by default, normal TLS verification, no cross-origin credential redirects, and
-bounded response reads. Startup rejects a successfully identified non-v4
-instance; an offline instance leaves the initialized service waiting/degraded.
+Select `/api/v3` for Sonarr v4 and `/api/v5` for Sonarr v5 from authenticated
+application status at the start of each cycle. A successfully identified
+unsupported major is rejected; offline or failed reads leave the observer
+degraded. Preserve the URL base path, `X-Api-Key`, the default 10-second timeout,
+normal TLS verification, redirect rejection, and bounded response reads. See
+the [version-specific endpoint contract](../sonarr-v5-compatibility/TECH.md#endpoint-inventory).
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET system/status` | Detect application version and connectivity |
 | `GET queue` | All pages with `includeUnknownSeriesItems=true` |
-| `GET manualimport` | `downloadId=<Sonarr ID>&filterExistingFiles=false`; automatic browser-equivalent matching |
+| `GET manualimport` | Automatic matching: `downloadId` on v4 or `downloadIds` on v5; `filterExistingFiles=false` |
 | `GET episode/{id}`, `GET episodefile/{id}` | Current library identity and existing-file state |
 | `GET series/{id}`, `GET qualityprofile/{id}` | Monitored state and current applicable profile |
-| `GET config/mediamanagement` | Proper/repack preference; decode only the required field |
+| `GET config/mediamanagement` (v4), `GET settings/mediamanagement` (v5) | Proper/repack preference; decode only the required field |
 | `GET history` | Exact `downloadId` filtering; grabbed membership and correlated outcomes |
 | `GET command/{id}` | Track the command accepted for this attempt |
 | `GET blocklist` | Confirm requested blocklisting when correlatable |
@@ -88,12 +89,11 @@ resources only within a cycle, including failed reads. No unbounded global
 history fetch per episode or full library scan.
 
 History is filtered by the actual Sonarr download ID and read newest-first,
-100 records/page, at most 100 pages. Intended membership requires complete
-grabbed history when queue/preview cannot establish a pack's scope. Verification
-can stop at an attempt-time cutoff once all needed outcomes are established.
-Incomplete history never proves missing activity, complete membership, or
-success. The fixture contains no history; add controlled history fixtures
-during implementation instead of inferring it from the queue.
+100 records/page, at most 100 pages. Packs and multi-episode queue groups require
+grabbed history. The observer combines episode IDs from the queue, preview, and
+grabbed history and checks their series against current library records. It reads
+all bounded pages during verification. Incomplete history never proves missing
+activity, complete membership, or success.
 
 Successful JSON is limited to 16 MiB per response with overflow detection;
 error snippets are limited to 64 KiB and sanitized before logging. Required
@@ -153,9 +153,10 @@ episode membership, quality comparison and an independent usability verdict are
 not required. One rejected media file can qualify the whole shared job. Generic
 blocked removal always suppresses blocklisting and replacement search.
 
-Within `RejectedCleanup`, recognize only permanent rejections matching Sonarr's
-anchored singular/plural `Episode(s) ... was/were unexpected considering the ...
-folder name` grammar. The source is
+Within `RejectedCleanup`, recognize only permanent rejections with v5 code
+`episodeUnexpected` or v4 text matching Sonarr's anchored singular/plural
+`Episode(s) ... was/were unexpected considering the ... folder name` grammar.
+The v4 producer is
 [MatchesFolderSpecification](https://github.com/Sonarr/Sonarr/blob/cab419ade8ac7fcab5bf80394ee492abd35d5f5a/src/NzbDrone.Core/MediaFiles/EpisodeImport/Specifications/MatchesFolderSpecification.cs).
 Sonarr compares parsed file and folder episode identities; preview associations
 can still agree with the queue, so do not compare those IDs to infer this failure.
@@ -166,8 +167,10 @@ only for an approved mismatched `remove_blocked` decision; scheduling, persisted
 cleanup-due time and manual reports use it. All submission gates and fresh
 fingerprint checks remain. Temporary/unknown wording keeps the configured wait.
 
-Recognize the exact queue `statusMessages[].messages[]` executable-file warning
-as separate cleanup authority before preview-dependent import/rejection policy.
+Recognize the explicit executable-file warning in queue
+`statusMessages[].messages[]` as separate cleanup authority before
+preview-dependent policy. Match the fixed v4 text or v5's extension-qualified
+form, as specified in the [v5 contract](../sonarr-v5-compatibility/TECH.md).
 Carry an optional executable-warning decision flag and include warning evidence
 in the observation fingerprint so fresh submission rejects a cleared warning.
 Use `remove_blocked` with zero cleanup wait and ordinary removal verification.

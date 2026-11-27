@@ -9,7 +9,7 @@ No source checkout or compiler is required to run the image.
 
 ## Requirements
 
-- One Sonarr v4 instance reachable from the container, with its API key.
+- One Sonarr v4 or v5 beta instance reachable from the container, with its API key.
 - One observer per Sonarr instance, even if separate state volumes are available.
 - Read-only configuration and a private, writable, persistent state directory.
 - A non-root container running as UID/GID 65532, with a read-only root filesystem.
@@ -17,6 +17,10 @@ No source checkout or compiler is required to run the image.
 No ports, media directories, container-engine sockets, or host networking are
 needed. All media operations go through Sonarr. HTTPS uses bundled trust roots
 and normal certificate verification.
+
+Use the existing Sonarr base URL, including its base path if configured. Do not
+include an API version in the URL. If a proxy explicitly allowlists API routes,
+allow `/api/v5` for a Sonarr v5 instance; existing v4 deployments still use `/api/v3`.
 
 ## Rootless Podman
 

@@ -79,6 +79,21 @@ Run the real remediator and real pinned Sonarr builds in isolated disposable env
 | 4-6: cleanup and search | On v5, use separate jobs for an explicit executable warning with empty preview, a permanent mismatch, a non-executable lookalike, redundant media, and an unusable release with blocklisting enabled. Observe reasons/waits, single DELETEs with the right `blocklistMethod`, actual disposable client removal, and no implicit search. For the unusable case prove per-episode failure/blocklist correlation, then one authorized `EpisodeSearch` for only still-missing monitored episodes. Run one v4 removal as a control. |
 | 6-8: migration and ambiguity | Upgrade a disposable same-instance v4 database to v5 with the same remediator state through a stopped restart. Include an unchanged pack with accrued wait and a durable attempt whose response was withheld by a local proxy. Compare `status`, `issues`, `actions`, `triggers` and transport logs: preserved state and budget, no replay, correlation where evidence survives, and protection where it does not. Capture command/episode/blocklist reads independently of response acknowledgement. |
 
+### Runtime evidence
+
+The Linux arm64 remediator binary (`sha256:7024e67d40592676cea80df24da0d4325efb2379c539e9dc354d5e4f5e9a0371`) was built with `CGO_ENABLED=0 mise exec -- go build -trimpath -buildvcs=false -o "$PROOF/remediator" ./cmd/sonarr-remediator`. The same binary ran against the pinned v4 and v5 distributions and a local Transmission 4.1 beta, using synthetic media and disposable state. The blocklist probes seeded grabbed history only; the remediator, Sonarr, and downloader produced the subsequent effects and evidence.
+
+| Command or observation | Result |
+| --- | --- |
+| `status --json`, `healthcheck`, `trigger --dry-run --json`, `triggers --json` | Both builds connected under `/sonarr`, healthcheck exited 0, and an empty preview exited 2 with no receipt. A wrong key against v5 produced `Sonarr authentication failure (HTTP 401)`, degraded health, and zero mutations. |
+| `trigger --dry-run --download-id ID --json` on both pack queues | Two v4 records and one grouped v5 record both produced one blocked download with both episode IDs. Neither had a usable preview. |
+| `trigger --execute --override-wait --download-id ID --json` and `actions --json` for missing episodes | On both majors, one import was acknowledged and verified; `downloadFolderImported` history contained both source and destination paths, the current episode had a file ID, and the library file existed. |
+| `trigger --execute --download-id ID --json` for the v5 executable warning | Cleanup was verified, Transmission lost only the selected item and its disposable file, and no `EpisodeSearch` was queued. |
+| V5 no-audio preview, removal, and follow-on search | `noAudio` selected unusable cleanup. Incomplete upstream history yielded a partial removal and no search. With complete history, the removal and blocklist correlated; Sonarr queued zero implicit searches, and a separate explicit trigger submitted `EpisodeSearch` for the one still-missing episode. |
+| `show ID --json` and `status --json` across the stopped v4-to-v5 upgrade | Same issue identity and eligibility timestamp, two logical rows, and elapsed time retained (16 s before, 28 s after subsequent healthy cycles). Leaving the observer running during Sonarr startup instead exposed a genuinely empty queue and reset waits; follow the stopped-upgrade order in [Upgrading](../../docs/UPGRADING.md#compatibility-boundaries). |
+
+Live proof does not cover stable v5, a queue exceeding 100 records, a strict in-place file upgrade, a live multi-season import, every rejection variant, or a lost transport response during upgrade. The partial-effect probe exercised unresolved evidence without reissuing the removal.
+
 ## Parallelization
 
 Keep client normalization, policy, state preservation, and mutation checks with one local implementer in the main checkout: all share the same queue/rejection representation. Once that representation is settled, one independent reviewer can inspect the final diff against this spec, and an operator can prepare disposable v4/v5 instances without editing the checkout. Land as one change after all critical runtime slices are proven; no separate branch or PR for endpoint subsets.
