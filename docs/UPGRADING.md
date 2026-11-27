@@ -23,7 +23,7 @@ and the existing state directory.
 
 | Version | Operator impact |
 | --- | --- |
-| Sonarr v5 compatibility | Image update only for existing v4 deployments; no settings or state migration in the remediator. A v5 upgrade behind a proxy that only forwards `/api/v3` requires a proxy change to allow `/api/v5`. Complete grabbed history is now required for multi-episode queue groups even when the preview has one file. |
+| 0.6.0 | Supports Sonarr v4 and v5 beta. Image update only for existing v4 deployments; no settings or state migration in the remediator. A v5 upgrade behind a proxy that only forwards `/api/v3` requires a proxy change to allow `/api/v5`. Complete grabbed history is now required for multi-episode queue groups even when the preview has one file. |
 | 0.5.0 | Breaking cleanup behavior: Sonarr's `Caution: Found executable file` queue warning can delete the shared download and client data on the first eligible scan, even with an empty preview. Disable cleanup before upgrading if this deletion is unwanted. Image-version update only; no configuration or state migration. |
 | 0.4.1 | INFO logs use periodic service summaries; detailed decisions require DEBUG. Image-version update only. |
 | 0.4.0 | Breaking cleanup behavior: permanent episode/folder mismatches can delete the shared download and client data on the first eligible scan, without the six-hour wait. Disable cleanup if this earlier deletion is unwanted. No configuration or state migration is required. |
